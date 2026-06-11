@@ -20,5 +20,7 @@ export const EV_VEHICLES: EVVehicle[] = [
 ];
 
 export function calculateRange(vehicle: EVVehicle, batteryLevel: number, safetyBuffer = 1.0): number {
-  return (batteryLevel / 100) * vehicle.battery_capacity * vehicle.efficiency * safetyBuffer;
+  // Subtract 10% reserve SoC so that the UI range matches the routing engine's safe range limit
+  const usableBattery = Math.max(0, batteryLevel - 10);
+  return (usableBattery / 100) * vehicle.battery_capacity * vehicle.efficiency * safetyBuffer;
 }

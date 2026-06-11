@@ -1,12 +1,12 @@
 // Auto-ranking simulation hook
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ChargingStation } from "@/data/stations";
 import { EVVehicle, calculateRange } from "@/data/vehicles";
 import { getScoreWeights } from "@/lib/route-preferences";
 import { useOCMStations } from "@/hooks/useOCMStations";
 
 const FIRST_HOP_SAFETY_FACTOR = 0.95;
-const ROUTE_BUFFER_KM = 100;
+const ROUTE_BUFFER_KM = 50;
 const FORWARD_PROGRESS_TOLERANCE_KM = 2;
 const RECHARGE_TARGET_BATTERY = 80;
 
@@ -26,6 +26,7 @@ export interface ScoredStation extends ChargingStation {
   score: number;
   rank?: number;
   routeProgressKm?: number;
+  rating: number;
 }
 
 export interface RerouteSuggestion {
@@ -50,23 +51,6 @@ function haversine(lat1: number, lng1: number, lat2: number, lng2: number): numb
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function pointToSegmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  if (dx === 0 && dy === 0) return haversine(px, py, ax, ay);
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
-  return haversine(px, py, ax + t * dx, ay + t * dy);
-}
-
-function distToPolyline(p: [number, number], poly: [number, number][]): number {
-  let min = Infinity;
-  for (let i = 0; i < poly.length - 1; i++) {
-    const d = pointToSegmentDist(p[0], p[1], poly[i][0], poly[i][1], poly[i + 1][0], poly[i + 1][1]);
-    if (d < min) min = d;
-  }
-  return min;
-}
-
 function getCumulativeDistances(poly: [number, number][]): number[] {
   const cumulDists: number[] = [0];
   for (let i = 1; i < poly.length; i++) {
@@ -75,26 +59,57 @@ function getCumulativeDistances(poly: [number, number][]): number[] {
   return cumulDists;
 }
 
-function getRouteProgress(p: [number, number], poly: [number, number][], cumulDists: number[]): number {
-  let nearestIdx = 0;
-  let nearestDist = Infinity;
+function projectOnRoute(
+  lat: number,
+  lng: number,
+  routeCoords: [number, number][],
+  cumulDists: number[],
+): { progressKm: number; distFromRouteKm: number } {
+  let bestDist = Infinity;
+  let bestProgress = 0;
 
-  for (let i = 0; i < poly.length; i++) {
-    const dist = haversine(p[0], p[1], poly[i][0], poly[i][1]);
-    if (dist < nearestDist) {
-      nearestDist = dist;
-      nearestIdx = i;
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const [lat1, lng1] = routeCoords[i];
+    const [lat2, lng2] = routeCoords[i + 1];
+    const segLen = cumulDists[i + 1] - cumulDists[i];
+    if (segLen < 0.0001) continue;
+
+    const d1 = haversine(lat1, lng1, lat, lng);
+    const d2 = haversine(lat2, lng2, lat, lng);
+    const dSeg = haversine(lat1, lng1, lat2, lng2);
+
+    let t = 0;
+    if (dSeg > 0.001) {
+      t = Math.max(0, Math.min(1, (d1 * d1 + dSeg * dSeg - d2 * d2) / (2 * dSeg * dSeg)));
+    }
+
+    const projLat = lat1 + t * (lat2 - lat1);
+    const projLng = lng1 + t * (lng2 - lng1);
+    const distToProj = haversine(projLat, projLng, lat, lng);
+
+    if (distToProj < bestDist) {
+      bestDist = distToProj;
+      bestProgress = cumulDists[i] + t * segLen;
     }
   }
 
-  return cumulDists[nearestIdx] ?? 0;
+  const lastIdx = routeCoords.length - 1;
+  if (lastIdx >= 0) {
+    const dLast = haversine(routeCoords[lastIdx][0], routeCoords[lastIdx][1], lat, lng);
+    if (dLast < bestDist) {
+      bestDist = dLast;
+      bestProgress = cumulDists[lastIdx];
+    }
+  }
+
+  return { progressKm: bestProgress, distFromRouteKm: bestDist };
 }
 
 function getFirstHopReachableStations(stations: RoutedStation[], initialRangeKm: number): RoutedStation[] {
   const allowedRangeKm = initialRangeKm * FIRST_HOP_SAFETY_FACTOR;
 
   return stations
-    .filter((station) => station.start_distance_km <= allowedRangeKm)
+    .filter((station) => station.start_distance_km * 1.3 <= allowedRangeKm)
     .sort((a, b) => a.start_distance_km - b.start_distance_km || b.routeProgressKm - a.routeProgressKm);
 }
 
@@ -127,12 +142,18 @@ function getProgressivelyReachableIds(
         if (candidate.routeProgressKm <= current.routeProgressKm + FORWARD_PROGRESS_TOLERANCE_KM) return false;
         if (candidate.distance_from_route > ROUTE_BUFFER_KM) return false;
 
-        const stationToStationKm = haversine(current.lat, current.lng, candidate.lat, candidate.lng);
+        const roadDist = (candidate.routeProgressKm - current.routeProgressKm) + current.distance_from_route + candidate.distance_from_route;
+        const stationToStationKm = Math.min(
+          haversine(current.lat, current.lng, candidate.lat, candidate.lng) * 1.3,
+          roadDist
+        );
         return stationToStationKm <= hopRangeKm;
       })
       .sort((a, b) => {
-        const aDistance = haversine(current.lat, current.lng, a.lat, a.lng);
-        const bDistance = haversine(current.lat, current.lng, b.lat, b.lng);
+        const aRoadDist = (a.routeProgressKm - current.routeProgressKm) + current.distance_from_route + a.distance_from_route;
+        const aDistance = Math.min(haversine(current.lat, current.lng, a.lat, a.lng) * 1.3, aRoadDist);
+        const bRoadDist = (b.routeProgressKm - current.routeProgressKm) + current.distance_from_route + b.distance_from_route;
+        const bDistance = Math.min(haversine(current.lat, current.lng, b.lat, b.lng) * 1.3, bRoadDist);
         return aDistance - bDistance || b.routeProgressKm - a.routeProgressKm;
       });
 
@@ -147,7 +168,8 @@ function getProgressivelyReachableIds(
 
 function predictWaitTime(queue: number, chargers: number, active: number, hourOfDay: number, trafficLevel: number, timeMode: "normal" | "peak" | "night"): number {
   const w = { queue: 8.5, chargers: -2.2, active: 3.1, hour: 0.8, traffic: 2.5, bias: 5 };
-  const hourFactor = hourOfDay >= 8 && hourOfDay <= 20 ? (hourOfDay - 14) ** 2 * 0.05 : -1;
+  // Concave-down parabola peaking at 14:00 (1.8) and dropping to 0 at 08:00 and 20:00
+  const hourFactor = hourOfDay >= 8 && hourOfDay <= 20 ? 1.8 - (hourOfDay - 14) ** 2 * 0.05 : -1.8;
   const raw =
     w.bias +
     w.queue * queue +
@@ -206,16 +228,10 @@ export function useSimulation() {
   const [routeCoords, setRouteCoords] = useState<[number, number][] | null>(null);
   const { stations: ocmStations, loading: stationsLoading, error: stationsError, source: stationsSource } = useOCMStations(routeCoords);
   const [allStations, setAllStations] = useState<ChargingStation[]>([]);
-  const [scoredStations, setScoredStations] = useState<ScoredStation[]>([]);
   const [simConfig, setSimConfig] = useState<SimulationConfig>({ trafficLevel: 3, timeMode: "normal" });
   const [batteryLevel, setBatteryLevel] = useState(80);
   const [vehicle, setVehicle] = useState<EVVehicle | null>(null);
   const simInterval = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const spatialCacheRef = useRef<{
-    routeCoords: [number, number][] | null;
-    distances: Map<string, { distanceFromRoute: number; startDistanceKm: number; routeProgressKm: number }>;
-  }>({ routeCoords: null, distances: new Map() });
 
   // Load real OCM stations once fetched
   useEffect(() => {
@@ -237,9 +253,11 @@ export function useSimulation() {
 
         for (let i = 0; i < updated.length; i++) {
           const station = { ...updated[i] };
+          let arrivedThisTick = false;
 
           // Arrivals: traffic also adds extra waiting vehicles directly
           if (Math.random() < arrivalProbability) {
+            arrivedThisTick = true;
             if (station.availableChargers > 0) {
               station.availableChargers -= 1;
               station.occupiedChargers += 1;
@@ -262,7 +280,7 @@ export function useSimulation() {
           }
 
           // Idle stations get new arrivals based on traffic
-          if (station.waitingVehicles === 0 && station.availableChargers === station.totalChargers && Math.random() < arrivalProbability * 0.4) {
+          if (!arrivedThisTick && station.totalChargers > 0 && station.waitingVehicles === 0 && station.availableChargers === station.totalChargers && Math.random() < arrivalProbability * 0.4) {
             station.availableChargers -= 1;
             station.occupiedChargers += 1;
           }
@@ -270,7 +288,7 @@ export function useSimulation() {
           station.status =
             station.availableChargers === 0
               ? "full"
-              : station.availableChargers <= station.totalChargers * 0.3
+              : station.availableChargers <= Math.max(1, Math.floor(station.totalChargers * 0.3))
                 ? "busy"
                 : "available";
 
@@ -279,7 +297,7 @@ export function useSimulation() {
 
         return updated;
       });
-    }, 3000);
+    }, 10000);
 
     return () => {
       if (simInterval.current) {
@@ -288,43 +306,43 @@ export function useSimulation() {
     };
   }, [simConfig]);
 
-  useEffect(() => {
+  const spatialDistances = useMemo(() => {
+    const cache = new Map<string, { distanceFromRoute: number; startDistanceKm: number; routeProgressKm: number }>();
+    
+    if (routeCoords && routeCoords.length > 1) {
+      console.log(`[Sim] Rebuilding spatial cache for ${allStations.length} stations along ${routeCoords.length}-point route...`);
+      const cumulDists = getCumulativeDistances(routeCoords);
+      for (const station of allStations) {
+        const proj = projectOnRoute(station.lat, station.lng, routeCoords, cumulDists);
+        const startDistanceKm = haversine(routeCoords[0][0], routeCoords[0][1], station.lat, station.lng);
+        cache.set(station.id, {
+          distanceFromRoute: proj.distFromRouteKm,
+          startDistanceKm,
+          routeProgressKm: proj.progressKm,
+        });
+      }
+    } else {
+      for (const station of allStations) {
+        cache.set(station.id, { distanceFromRoute: 0, startDistanceKm: 0, routeProgressKm: 0 });
+      }
+    }
+    return cache;
+  }, [
+    routeCoords,
+    allStations.length,
+    allStations[0]?.id,
+    allStations[allStations.length - 1]?.id,
+  ]);
+
+  const scoredStations = useMemo(() => {
     const hourOfDay = simConfig.timeMode === "peak" ? 18 : simConfig.timeMode === "night" ? 2 : 12;
     const timeModeMultiplier = simConfig.timeMode === "peak" ? 1.4 : simConfig.timeMode === "night" ? 0.6 : 1.0;
     const trafficMultiplier = 1 + (simConfig.trafficLevel - 1) * 0.05;
-    const initialRangeKm = vehicle ? calculateRange(vehicle, batteryLevel) : Infinity;
-    const hopBatteryLevel = vehicle ? Math.max(batteryLevel, RECHARGE_TARGET_BATTERY) : 100;
-    const hopRangeKm = vehicle ? calculateRange(vehicle, hopBatteryLevel) * FIRST_HOP_SAFETY_FACTOR : Infinity;
-    const firstHopAllowedKm = initialRangeKm * FIRST_HOP_SAFETY_FACTOR;
 
-    // Check if route or stations changed to rebuild spatial cache
-    const coordsChanged = routeCoords !== spatialCacheRef.current.routeCoords;
-    const stationsChanged = allStations.length !== spatialCacheRef.current.distances.size;
-
-    if (coordsChanged || stationsChanged) {
-      const cache = new Map<string, { distanceFromRoute: number; startDistanceKm: number; routeProgressKm: number }>();
-      
-      if (routeCoords && routeCoords.length > 1) {
-        console.log(`[Sim] Rebuilding spatial cache for ${allStations.length} stations along ${routeCoords.length}-point route...`);
-        const cumulDists = getCumulativeDistances(routeCoords);
-        for (const station of allStations) {
-          const distanceFromRoute = distToPolyline([station.lat, station.lng], routeCoords);
-          const startDistanceKm = haversine(routeCoords[0][0], routeCoords[0][1], station.lat, station.lng);
-          const routeProgressKm = getRouteProgress([station.lat, station.lng], routeCoords, cumulDists);
-          cache.set(station.id, { distanceFromRoute, startDistanceKm, routeProgressKm });
-        }
-      } else {
-        for (const station of allStations) {
-          cache.set(station.id, { distanceFromRoute: 0, startDistanceKm: 0, routeProgressKm: 0 });
-        }
-      }
-      spatialCacheRef.current = { routeCoords, distances: cache };
-    }
-
-    console.log(`[Sim] timeMode=${simConfig.timeMode} traffic=${simConfig.trafficLevel} timeMult=${timeModeMultiplier} trafficMult=${trafficMultiplier.toFixed(2)}`);
+    console.log(`[Sim] scoring stations: timeMode=${simConfig.timeMode} traffic=${simConfig.trafficLevel} timeMult=${timeModeMultiplier} trafficMult=${trafficMultiplier.toFixed(2)}`);
 
     const scored: RoutedStation[] = allStations.map((station) => {
-      const cached = spatialCacheRef.current.distances.get(station.id) || {
+      const cached = spatialDistances.get(station.id) || {
         distanceFromRoute: 0,
         startDistanceKm: 0,
         routeProgressKm: 0,
@@ -378,6 +396,7 @@ export function useSimulation() {
         reachable: cached.distanceFromRoute <= 50, // within route corridor
         score: Math.round(score * 1000) / 1000,
         routeProgressKm: cached.routeProgressKm,
+        rating: Math.round(rating * 10) / 10,
       };
     });
 
@@ -409,8 +428,8 @@ export function useSimulation() {
       console.groupEnd();
     }
 
-    setScoredStations(filtered);
-  }, [allStations, simConfig, batteryLevel, vehicle, routeCoords]);
+    return filtered;
+  }, [allStations, simConfig, routeCoords, spatialDistances]);
 
 
   useEffect(() => {

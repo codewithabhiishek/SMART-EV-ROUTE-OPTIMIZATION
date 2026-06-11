@@ -28,21 +28,38 @@ export function estimateEnergyNeeded(
 export function estimateStationChargeCostSmart(
   vehicle: EVVehicle | null,
   batteryLevel: number,
-  station: { pricePerKWh: number; distance_from_route: number; start_distance_km: number; power: number },
+  station: { pricePerKWh: number; distance_from_route: number; start_distance_km: number; power: number; routeProgressKm?: number },
 ): { cost: number; noChargeNeeded: boolean } {
   if (!vehicle) return { cost: 0, noChargeNeeded: true };
 
   const kwhPerKm = 1 / vehicle.efficiency;
   const currentEnergyKwh = (batteryLevel / 100) * vehicle.battery_capacity;
 
-  // Energy to reach this station (apply 1.3x road-distance correction to haversine)
-  const roadCorrectionFactor = 1.3;
-  const energyToReach = station.start_distance_km * roadCorrectionFactor * kwhPerKm;
-  const energyOnArrival = Math.max(0, currentEnergyKwh - energyToReach);
+  // Safe range leaving 10% SoC reserve
+  const initialSafeRange = Math.max(0, currentEnergyKwh - vehicle.battery_capacity * 0.1) * vehicle.efficiency;
 
-  // Charge to 80%
-  const targetEnergy = vehicle.battery_capacity * 0.8;
-  const energyToCharge = Math.max(0, targetEnergy - energyOnArrival);
+  // Use routeProgressKm if available (distance along centerline), fallback to start_distance_km * 1.3
+  const progressKm = station.routeProgressKm !== undefined ? station.routeProgressKm : station.start_distance_km * 1.3;
+
+  // Detour is round-trip
+  const detourKm = station.distance_from_route * 2;
+  const totalLegDist = progressKm + detourKm;
+
+  let energyToCharge = 0;
+
+  if (totalLegDist <= initialSafeRange) {
+    // If the station is reachable within the first hop, we estimate cost based on energy needed to cover that leg
+    const energyUsed = totalLegDist * kwhPerKm;
+    const energyOnArrival = Math.max(vehicle.battery_capacity * 0.1, currentEnergyKwh - energyUsed);
+    const targetEnergy = vehicle.battery_capacity * 0.8;
+    energyToCharge = Math.max(0, targetEnergy - energyOnArrival);
+  } else {
+    // If beyond the first hop, the vehicle must have charged along the way.
+    // We assume it arrives at the station with about 15% SoC (slightly above the min reserve of 10%)
+    const energyOnArrival = vehicle.battery_capacity * 0.15;
+    const targetEnergy = vehicle.battery_capacity * 0.8;
+    energyToCharge = Math.max(0, targetEnergy - energyOnArrival);
+  }
 
   if (energyToCharge <= 0) {
     return { cost: 0, noChargeNeeded: true };

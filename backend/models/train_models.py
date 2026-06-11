@@ -22,7 +22,11 @@ from sklearn.metrics import (
     mean_squared_error,
     r2_score,
 )
-from xgboost import XGBRegressor
+try:
+    from xgboost import XGBRegressor
+    HAS_XGBOOST = True
+except (ImportError, Exception):
+    HAS_XGBOOST = False
 import joblib
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "collected"
@@ -112,8 +116,9 @@ class WaitTimePredictor:
             "Linear Regression": LinearRegression(),
             "Random Forest": RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42),
             "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, max_depth=5, random_state=42),
-            "XGBoost": XGBRegressor(n_estimators=100, max_depth=5, random_state=42, verbosity=0),
         }
+        if HAS_XGBOOST:
+            candidates["XGBoost"] = XGBRegressor(n_estimators=100, max_depth=5, random_state=42, verbosity=0)
 
         results = {}
         for name, model in candidates.items():
@@ -298,8 +303,9 @@ class StationScorer:
             "Linear Regression": LinearRegression(),
             "Random Forest": RandomForestRegressor(n_estimators=100, max_depth=8, random_state=42),
             "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, max_depth=5, random_state=42),
-            "XGBoost": XGBRegressor(n_estimators=100, max_depth=5, random_state=42, verbosity=0),
         }
+        if HAS_XGBOOST:
+            candidates["XGBoost"] = XGBRegressor(n_estimators=100, max_depth=5, random_state=42, verbosity=0)
 
         results = {}
         for name, model in candidates.items():

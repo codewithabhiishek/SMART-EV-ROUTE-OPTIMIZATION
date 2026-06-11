@@ -37,7 +37,7 @@ interface OCMStation {
 
 function randomStatus(available: number, total: number): "available" | "busy" | "full" {
   if (available === 0) return "full";
-  if (available <= total * 0.3) return "busy";
+  if (available <= Math.max(1, Math.floor(total * 0.3))) return "busy";
   return "available";
 }
 

@@ -21,6 +21,7 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+from functools import cmp_to_key
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -32,6 +33,19 @@ PLOTS_DIR.mkdir(exist_ok=True)
 
 STATIONS_TS_PATH = BASE_DIR / "src" / "data" / "stations.ts"
 CACHE_PATH = EVAL_DIR / "routes_cache.json"
+
+import joblib
+SCORER_PATH = BACKEND_DIR / "models" / "saved" / "station_scorer.pkl"
+try:
+    if SCORER_PATH.exists():
+        ml_scorer = joblib.load(SCORER_PATH)
+        print("🤖 Loaded trained StationScorer ML model successfully!")
+    else:
+        ml_scorer = None
+        print("⚠️ StationScorer ML model not found. ML-based policy will fallback to heuristic.")
+except Exception as e:
+    print(f"⚠️ Could not load ML model: {e}")
+    ml_scorer = None
 
 # Set styling for publication-ready plots
 sns.set_theme(style="whitegrid", context="paper", font_scale=1.3)
@@ -136,12 +150,28 @@ def parse_ts_stations(file_path: Path) -> list:
     start_idx = content.find("const rawStations")
     if start_idx == -1:
         raise ValueError("Could not find rawStations array in stations.ts")
-        
-    array_start = content.find("[", start_idx)
-    array_end = content.find("];", array_start)
+    eq_idx = content.find("=", start_idx)
+    if eq_idx == -1:
+        raise ValueError("Could not find '=' after rawStations in stations.ts")
+    array_start = content.find("[", eq_idx)
+    if array_start == -1:
+        raise ValueError("Could not find array start in stations.ts")
+
+    # Find the exact matching closing bracket by counting braces
+    bracket_count = 0
+    array_end = -1
+    for i in range(array_start, len(content)):
+        if content[i] == "[":
+            bracket_count += 1
+        elif content[i] == "]":
+            bracket_count -= 1
+            if bracket_count == 0:
+                array_end = i + 1
+                break
+
     if array_end == -1:
-        array_end = len(content)
-        
+        raise ValueError("Could not find matching closing bracket for rawStations")
+
     array_content = content[array_start:array_end]
     
     # Extract blocks of { ... }
@@ -305,7 +335,7 @@ def project_stations_to_corridor(stations: list, route_coords: list, cumul_dists
         progress, dist_from_route = project_on_route(s["lat"], s["lng"], route_coords, cumul_dists)
         progress_km = progress * scale_factor
         
-        if dist_from_route > 30.0 or progress_km < 0 or progress_km > route_dist_km:
+        if dist_from_route > 50.0 or progress_km < 0 or progress_km > route_dist_km:
             continue
             
         projected.append({
@@ -337,7 +367,7 @@ def simulate_station_dynamics(projected_stations: list, time_mode: str, traffic_
         power_norm = min(s["power"] / 200.0, 1.0)
         rating_norm = min(rating / 5.0, 1.0)
         
-        # 4. Score calculation
+        # 4. Score calculation (Heuristic)
         score = (
             WEIGHTS["distance"] * dist_norm +
             WEIGHTS["wait"]     * wait_norm +
@@ -347,6 +377,36 @@ def simulate_station_dynamics(projected_stations: list, time_mode: str, traffic_
             WEIGHTS["rating"]   * (1.0 - rating_norm)
         )
         
+        # 5. Score calculation (ML Model-based)
+        if ml_scorer is not None:
+            occupied = total_chargers if current_wait > 0 else max(0, total_chargers - 1)
+            occupancy_rate = occupied / max(1, total_chargers)
+            hour_of_day = 18 if time_mode == "peak" else (2 if time_mode == "night" else 12)
+            is_peak_hour = 1 if time_mode == "peak" else 0
+            
+            features = pd.DataFrame([{
+                "distance_from_route": ps["distFromRouteKm"],
+                "current_wait_time": current_wait,
+                "traffic_level": traffic_level,
+                "price_per_kwh": s["pricePerKWh"],
+                "power_kw": s["power"],
+                "occupancy_rate": occupancy_rate,
+                "hour_of_day": hour_of_day,
+                "is_peak_hour": is_peak_hour
+            }])
+            features = features[[
+                "distance_from_route", "current_wait_time", "traffic_level",
+                "price_per_kwh", "power_kw", "occupancy_rate",
+                "hour_of_day", "is_peak_hour"
+            ]]
+            
+            # Predict utility score (0 to 1, higher is better)
+            # Since sorting expects LOWER score to be better (ascending), invert it.
+            ml_utility = float(ml_scorer.predict(features)[0])
+            score_ml = 1.0 - ml_utility
+        else:
+            score_ml = score
+            
         processed_stations.append({
             "station": {
                 "id": s["id"],
@@ -355,7 +415,8 @@ def simulate_station_dynamics(projected_stations: list, time_mode: str, traffic_
                 "pricePerKWh": s["pricePerKWh"],
                 "distance_from_route": ps["distFromRouteKm"],
                 "current_wait_time": current_wait,
-                "score": score
+                "score": score,
+                "score_ml": score_ml
             },
             "routeProgressKm": ps["routeProgressKm"],
             "distFromRouteKm": ps["distFromRouteKm"]
@@ -473,39 +534,62 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
             safe_candidates = [c for c in candidates if c[1] <= safe_max_dist]
             pool = safe_candidates if safe_candidates else candidates
             
-            def smart_key(item):
-                s_obj = item[0]["station"]
-                dist = item[2]
-                dist_bucket = -round(dist / 10.0) * 10.0
-                return (dist_bucket, s_obj["score"])
-            pool.sort(key=smart_key)
+            def smart_cmp(item1, item2):
+                dist1 = item1[2]
+                dist2 = item2[2]
+                if abs(dist1 - dist2) > 50.0:
+                    return 1 if dist1 < dist2 else -1
+                s1 = item1[0]["station"]["score"]
+                s2 = item2[0]["station"]["score"]
+                return -1 if s1 < s2 else (1 if s1 > s2 else 0)
+                
+            pool.sort(key=cmp_to_key(smart_cmp))
             chosen_tuple = pool[0]
             
-        # Ablation study variants
+        elif policy == "ml_smart":
+            safe_max_dist = safe_range * 0.85
+            safe_candidates = [c for c in candidates if c[1] <= safe_max_dist]
+            pool = safe_candidates if safe_candidates else candidates
+            
+            def ml_smart_cmp(item1, item2):
+                dist1 = item1[2]
+                dist2 = item2[2]
+                if abs(dist1 - dist2) > 50.0:
+                    return 1 if dist1 < dist2 else -1
+                s1 = item1[0]["station"].get("score_ml", item1[0]["station"]["score"])
+                s2 = item2[0]["station"].get("score_ml", item2[0]["station"]["score"])
+                return -1 if s1 < s2 else (1 if s1 > s2 else 0)
+                
+            pool.sort(key=cmp_to_key(ml_smart_cmp))
+            chosen_tuple = pool[0]
+            
         elif policy.startswith("ablation_"):
             safe_max_dist = safe_range * 0.85
             safe_candidates = [c for c in candidates if c[1] <= safe_max_dist]
             pool = safe_candidates if safe_candidates else candidates
             
-            def ablated_key(item):
-                s_obj = item[0]["station"]
-                dist = item[2]
-                dist_bucket = -round(dist / 10.0) * 10.0
-                
+            def get_ablation_score(s_obj):
                 dist_norm = min(s_obj["distance_from_route"] / 100.0, 1.0)
                 wait_norm = min(s_obj["current_wait_time"] / 60.0, 1.0)
                 price_norm = min(s_obj["pricePerKWh"] / 30.0, 1.0)
                 
                 if policy == "ablation_dist":
-                    score = dist_norm
+                    return dist_norm
                 elif policy == "ablation_dist_traffic":
-                    score = 0.5 * dist_norm + 0.5 * wait_norm
+                    return 0.5 * dist_norm + 0.5 * wait_norm
                 else:  # ablation_dist_traffic_price
-                    score = 0.4 * dist_norm + 0.4 * wait_norm + 0.2 * price_norm
+                    return 0.4 * dist_norm + 0.4 * wait_norm + 0.2 * price_norm
                     
-                return (dist_bucket, score)
+            def ablation_cmp(item1, item2):
+                dist1 = item1[2]
+                dist2 = item2[2]
+                if abs(dist1 - dist2) > 50.0:
+                    return 1 if dist1 < dist2 else -1
+                s1 = get_ablation_score(item1[0]["station"])
+                s2 = get_ablation_score(item2[0]["station"])
+                return -1 if s1 < s2 else (1 if s1 > s2 else 0)
                 
-            pool.sort(key=ablated_key)
+            pool.sort(key=cmp_to_key(ablation_cmp))
             chosen_tuple = pool[0]
             
         chosen = chosen_tuple[0]
@@ -531,7 +615,7 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
             current_position = chosen["routeProgressKm"]
             continue
             
-        effective_price = max(8.0, chosen["station"]["pricePerKWh"])
+        effective_price = chosen["station"]["pricePerKWh"]
         cost = round(energy_to_charge * effective_price)
         
         max_vehicle_power = vehicle["max_charging_power"]
@@ -695,7 +779,8 @@ def run_weight_sensitivity_sweep(df_normal: pd.DataFrame, raw_stations: list, ro
                         "pricePerKWh": s["pricePerKWh"],
                         "distance_from_route": ps["distFromRouteKm"],
                         "current_wait_time": current_wait,
-                        "score": score
+                        "score": score,
+                        "score_ml": score
                     },
                     "routeProgressKm": ps["routeProgressKm"],
                     "distFromRouteKm": ps["distFromRouteKm"]
@@ -735,7 +820,7 @@ def run_experiments():
     print("=" * 60, flush=True)
     
     policies = [
-        "greedy", "cheapest", "fastest", "smart", 
+        "greedy", "cheapest", "fastest", "smart", "ml_smart",
         "ablation_dist", "ablation_dist_traffic", "ablation_dist_traffic_price"
     ]
     
@@ -933,7 +1018,7 @@ def compute_statistics_and_report(df: pd.DataFrame, policies: list, sweep_result
     for sc in scenarios:
         summary["sensitivity_analysis"][sc] = {}
         df_sc = df[df["scenario"] == sc]
-        for pol in ["greedy", "cheapest", "fastest", "smart"]:
+        for pol in ["greedy", "cheapest", "fastest", "smart", "ml_smart"]:
             success_df = df_sc[df_sc[f"{pol}_success"] == 1]
             summary["sensitivity_analysis"][sc][pol] = {
                 "success_rate": round(df_sc[f"{pol}_success"].mean() * 100.0, 2),
@@ -989,7 +1074,8 @@ def generate_academic_plots(df: pd.DataFrame, sweep_results: list):
         "greedy": "Greedy (Closest)",
         "cheapest": "Cheapest (Eco)",
         "fastest": "Fastest Charger",
-        "smart": "Smart Heuristic (Ours)"
+        "smart": "Smart Heuristic (Ours)",
+        "ml_smart": "ML-Optimized (Ours)"
     }
     
     # Colors matching policy identities
@@ -998,7 +1084,8 @@ def generate_academic_plots(df: pd.DataFrame, sweep_results: list):
         "Greedy (Closest)": palette[3],       # Red/Coral
         "Cheapest (Eco)": palette[2],         # Green
         "Fastest Charger": palette[0],        # Blue
-        "Smart Heuristic (Ours)": palette[1]  # Orange
+        "Smart Heuristic (Ours)": palette[1], # Orange
+        "ML-Optimized (Ours)": palette[4]     # Purple
     }
     
     # Melt normal baseline data

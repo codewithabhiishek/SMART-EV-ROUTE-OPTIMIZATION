@@ -54,6 +54,7 @@ export default function MapView({
 }: MapViewProps) {
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.LayerGroup | null>(null);
+  const markersMapRef = useRef<Map<string, L.Marker>>(new Map());
   const routeLayerRef = useRef<L.Polyline | null>(null);
   const glowLayerRef = useRef<L.Polyline | null>(null);
   const firstHopCircleRef = useRef<L.Circle | null>(null);
@@ -75,12 +76,12 @@ export default function MapView({
     return () => {
       map.remove();
       mapRef.current = null;
+      markersMapRef.current.clear();
     };
   }, []);
 
   useEffect(() => {
     if (!markersRef.current || !mapRef.current) return;
-    markersRef.current.clearLayers();
 
     const recommendedIds = new Set(recommended.map((station) => String(station.id).trim()));
 
@@ -88,8 +89,18 @@ export default function MapView({
       (s) => (typeof s.rank === "number" && s.rank <= 10) || s.reachable
     );
 
+    const visibleIds = new Set(visibleStations.map((s) => String(s.id).trim()));
+
+    // Remove markers that are no longer visible
+    for (const [stationId, marker] of Array.from(markersMapRef.current.entries())) {
+      if (!visibleIds.has(stationId)) {
+        markersRef.current.removeLayer(marker);
+        markersMapRef.current.delete(stationId);
+      }
+    }
+
     // ─── DIAGNOSTIC: paste what you see here so we can fix the root cause ───
-    if (tripPlan?.stops?.length) {
+    if (import.meta.env.DEV && tripPlan?.stops?.length) {
       console.group("🔍 MapView Stop Matching Diagnostic");
       console.log(
         "tripPlan IDs (type | value):",
@@ -117,52 +128,48 @@ export default function MapView({
     });
 
     visibleStations.forEach((station) => {
-      const isRecommended = recommendedIds.has(String(station.id).trim());
+      const stationId = String(station.id).trim();
+      const isRecommended = recommendedIds.has(stationId);
 
-      // Try ID match first
-      let stopNumber = stopMap.get(String(station.id).trim());
+      // Match strictly by ID now that type safety is guaranteed
+      const stopNumber = stopMap.get(stationId);
+      const icon = createStationIcon(station, stopNumber, isRecommended, firstHopRangeKm);
 
-      // FALLBACK: tight coordinate match (~55 m) while root cause is investigated.
-      // Each fallback hit is logged — use those logs to trace the ID mismatch.
-      if (stopNumber === undefined && tripPlan?.stops?.length) {
-        const coordMatch = tripPlan.stops.find(s =>
-          s.station.lat !== undefined &&
-          s.station.lng !== undefined &&
-          Math.abs(s.station.lat - station.lat) < 0.0005 &&
-          Math.abs(s.station.lng - station.lng) < 0.0005
-        );
-        if (coordMatch) {
-          stopNumber = coordMatch.stop;
-          console.warn(
-            `⚠️ Stop #${coordMatch.stop} matched by COORDS not ID.\n` +
-            `  tripPlan id: ${typeof coordMatch.station.id} | "${coordMatch.station.id}"\n` +
-            `  station  id: ${typeof station.id} | "${station.id}"`
-          );
-        }
+      const tooltipContent = `<div class="glass-panel p-3 rounded-xl min-w-[220px]">
+        <div class="font-semibold text-sm text-foreground">${station.name}</div>
+        <div class="text-xs text-muted-foreground mt-1">${station.city} · Score: ${Number(station.score).toFixed(2)}</div>
+        <div class="text-xs mt-1">⚡ ${station.power}kW · ${station.availableChargers}/${station.totalChargers} free</div>
+        <div class="text-xs mt-0.5">⏱ Wait: ${Math.round(station.current_wait_time)}m · AI: ${Math.round(station.predicted_wait_time)}m</div>
+        <div class="text-xs mt-0.5">Start → station: ${Math.round(station.start_distance_km)} km</div>
+        <div class="text-xs mt-0.5">${station.reachable ? "✓ Reachable chain" : "✕ Not yet reachable"}</div>
+        ${firstHopRangeKm && station.start_distance_km <= firstHopRangeKm ? '<div class="text-xs mt-0.5 text-accent font-medium">◉ Inside first-hop range</div>' : ""}
+        <div class="text-[9px] mt-1.5 opacity-70">📍 Real location · ⏱ Simulated availability</div>
+        ${stopNumber !== undefined ? `<div class="text-xs mt-1 text-primary font-medium">★ Stop #${stopNumber}</div>` : ""}
+      </div>`;
+
+      const existingMarker = markersMapRef.current.get(stationId);
+      if (existingMarker) {
+        existingMarker.setIcon(icon);
+        existingMarker.bindTooltip(tooltipContent, {
+          direction: "top",
+          offset: [0, -16],
+          className: "custom-tooltip",
+          permanent: false,
+        });
+        existingMarker.off("click");
+        existingMarker.on("click", () => onSelectStation(station));
+      } else {
+        const marker = L.marker([station.lat, station.lng], { icon });
+        marker.on("click", () => onSelectStation(station));
+        marker.bindTooltip(tooltipContent, {
+          direction: "top",
+          offset: [0, -16],
+          className: "custom-tooltip",
+          permanent: false,
+        });
+        markersRef.current!.addLayer(marker);
+        markersMapRef.current.set(stationId, marker);
       }
-
-      const marker = L.marker([station.lat, station.lng], {
-        icon: createStationIcon(station, stopNumber, isRecommended, firstHopRangeKm),
-      });
-
-      marker.on("click", () => onSelectStation(station));
-
-      marker.bindTooltip(
-        `<div class="glass-panel p-3 rounded-xl min-w-[220px]">
-          <div class="font-semibold text-sm text-foreground">${station.name}</div>
-          <div class="text-xs text-muted-foreground mt-1">${station.city} · Score: ${Number(station.score).toFixed(2)}</div>
-          <div class="text-xs mt-1">⚡ ${station.power}kW · ${station.availableChargers}/${station.totalChargers} free</div>
-          <div class="text-xs mt-0.5">⏱ Wait: ${Math.round(station.current_wait_time)}m · AI: ${Math.round(station.predicted_wait_time)}m</div>
-          <div class="text-xs mt-0.5">Start → station: ${Math.round(station.start_distance_km)} km</div>
-          <div class="text-xs mt-0.5">${station.reachable ? "✓ Reachable chain" : "✕ Not yet reachable"}</div>
-          ${firstHopRangeKm && station.start_distance_km <= firstHopRangeKm ? '<div class="text-xs mt-0.5 text-accent font-medium">◉ Inside first-hop range</div>' : ""}
-          <div class="text-[9px] mt-1.5 opacity-70">📍 Real location · ⏱ Simulated availability</div>
-          ${stopNumber !== undefined ? `<div class="text-xs mt-1 text-primary font-medium">★ Stop #${stopNumber}</div>` : ""}
-        </div>`,
-        { direction: "top", offset: [0, -16], className: "custom-tooltip", permanent: false },
-      );
-
-      markersRef.current!.addLayer(marker);
     });
   }, [stations, recommended, onSelectStation, firstHopRangeKm, tripPlan]);
 

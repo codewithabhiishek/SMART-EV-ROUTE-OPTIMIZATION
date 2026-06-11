@@ -8,6 +8,8 @@ import { getScoreWeights } from "@/lib/route-preferences";
 const MIN_BATTERY_PERCENT = 10; // never let battery drop below this
 const CHARGE_TARGET_PERCENT = 80; // charge up to this at each stop
 const ROUTE_CORRIDOR_KM = 50; // only consider stations within this distance from route
+const DETOUR_SPEED_KMH = 50; // average speed off-route
+const PROGRESS_WINDOW_KM = 50; // threshold window (km) to trade off progress vs station quality score
 
 export interface ChargingStop {
   stop: number;
@@ -177,6 +179,7 @@ function forwardBatterySimulation(
   const MAX_ITERATIONS = Math.max(30, maxPossibleStops);
 
   let iteration = 0;
+  let alreadyBoosted = false;
 
   while (currentPositionKm < routeDistanceKm && iteration < MAX_ITERATIONS) {
     iteration++;
@@ -221,9 +224,14 @@ function forwardBatterySimulation(
       });
 
       if (boostedCandidates.length > 0) {
+        if (alreadyBoosted) {
+          console.warn(`[ChargeSim] ❌ Already boosted to 100% at pos=${currentPositionKm.toFixed(1)}km, but candidates still empty/rejected.`);
+          return { kind: stops.length === 0 ? "no_station" : "route_gap", stops, firstReachableCount };
+        }
         // We can reach stations by charging to 100% — boost current energy
         console.log(`[ChargeSim] ⚡ No stations at 80% range (${safeRange.toFixed(0)}km), boosting to 100% (${boostedRange.toFixed(0)}km) — found ${boostedCandidates.length} candidates`);
         currentEnergy = maxEnergy;
+        alreadyBoosted = true;
         continue; // re-run this iteration with boosted energy
       }
 
@@ -286,7 +294,7 @@ function forwardBatterySimulation(
       pool.sort((a, b) => {
         const aDist = a.routeProgressKm - currentPositionKm;
         const bDist = b.routeProgressKm - currentPositionKm;
-        if (Math.abs(aDist - bDist) > 10) return bDist - aDist;
+        if (Math.abs(aDist - bDist) > PROGRESS_WINDOW_KM) return bDist - aDist;
         return a.station.score - b.station.score;
       });
       chosen = pool[0];
@@ -345,7 +353,7 @@ function forwardBatterySimulation(
       continue;
     }
 
-    const effectivePrice = Math.max(8, chosen.station.pricePerKWh || 15);
+    const effectivePrice = chosen.station.pricePerKWh !== undefined && chosen.station.pricePerKWh >= 0 ? chosen.station.pricePerKWh : 15;
     const cost = Math.round(energyToCharge * effectivePrice);
     
     // Limit charging power to the vehicle's max intake power!
@@ -388,6 +396,7 @@ function forwardBatterySimulation(
     // STRICT: update position and energy — NO jumps
     currentEnergy = energyAfterCharge;
     currentPositionKm = chosen.routeProgressKm;
+    alreadyBoosted = false;
 
     // Sanity check: position must have advanced
     if (distToStation < 1) {
@@ -548,9 +557,9 @@ export function useTripPlanner(
     const totalCharge = result.stops.reduce((t, s) => t + s.chargingTimeMin, 0);
     const totalCost = result.stops.reduce((t, s) => t + s.chargingCost, 0);
 
-    // Calculate detour driving time (assume 50 km/h average speed = 1.2 minutes per km detour)
+    // Calculate detour driving time (assume average speed = minutes per km detour)
     const totalDetourKm = result.stops.reduce((t, s) => t + s.station.distance_from_route * 2, 0);
-    const detourDriveTimeMin = Math.round(totalDetourKm * 1.2);
+    const detourDriveTimeMin = Math.round(totalDetourKm * (60 / DETOUR_SPEED_KMH));
     const totalDriveTime = driveDurationMin + detourDriveTimeMin;
 
     console.log("[ChargeSim] 💰 Trip Summary:", {
@@ -580,7 +589,7 @@ export function useTripPlanner(
       const charge = simResult.stops.reduce((t, s) => t + s.chargingTimeMin, 0);
       const cost = simResult.stops.reduce((t, s) => t + s.chargingCost, 0);
       const detourKm = simResult.stops.reduce((t, s) => t + s.station.distance_from_route * 2, 0);
-      const detourTime = Math.round(detourKm * 1.2);
+      const detourTime = Math.round(detourKm * (60 / DETOUR_SPEED_KMH));
       return {
         time: Math.round(driveDurationMin + wait + charge + detourTime),
         cost: cost,
@@ -609,7 +618,7 @@ export function useTripPlanner(
       totalChargingCost: totalCost,
       totalDistanceKm: routeDistanceKm + Math.round(totalDetourKm),
       firstReachableCount: result.firstReachableCount,
-      rangeAlert: result.kind === "route_gap" ? "last_station" : "ok",
+      rangeAlert: result.kind === "route_gap" ? "route_gap" : "ok",
       comparison,
     };
   }, [stations, routeCoords, vehicle, batteryLevel, routeDistanceKm, driveDurationMin]);

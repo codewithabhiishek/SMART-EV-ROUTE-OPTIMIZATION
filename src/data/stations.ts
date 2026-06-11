@@ -22,7 +22,7 @@ const operators = ["Tata Power EZ", "Ather Grid", "ChargeZone", "Fortum", "EESL"
 
 function randomStatus(available: number, total: number): "available" | "busy" | "full" {
   if (available === 0) return "full";
-  if (available <= total * 0.3) return "busy";
+  if (available <= Math.max(1, Math.floor(total * 0.3))) return "busy";
   return "available";
 }
 
@@ -125,6 +125,12 @@ const rawStations: Omit<ChargingStation, "availableChargers" | "occupiedChargers
   // Bangalore-Chennai Highway
   { id: "BCW01", name: "Vellore Fort Stop", city: "Tamil Nadu", lat: 12.9165, lng: 79.1325, chargerType: "fast", power: 120, totalChargers: 4, avgChargeDuration: 30, pricePerKWh: 15, operator: "Kazam" },
   { id: "BCW02", name: "Kanchipuram Services", city: "Tamil Nadu", lat: 12.8342, lng: 79.7036, chargerType: "both", power: 60, totalChargers: 4, avgChargeDuration: 45, pricePerKWh: 14, operator: "Statiq" },
+  // Corridor Gap Bridging Stations (Added to allow complete routing on long-distance routes)
+  { id: "HCW02A", name: "Hingoli Highway Stop", city: "Maharashtra", lat: 19.7200, lng: 77.1500, chargerType: "fast", power: 100, totalChargers: 4, avgChargeDuration: 30, pricePerKWh: 15, operator: "Statiq" },
+  { id: "BHW01A", name: "Chikballapur Plaza", city: "Karnataka", lat: 13.4300, lng: 77.7200, chargerType: "fast", power: 120, totalChargers: 5, avgChargeDuration: 28, pricePerKWh: 16, operator: "ChargeZone" },
+  { id: "JIW03C", name: "Mandsaur Gateway", city: "Madhya Pradesh", lat: 24.0700, lng: 75.0700, chargerType: "both", power: 80, totalChargers: 4, avgChargeDuration: 35, pricePerKWh: 14, operator: "Kazam" },
+  { id: "JIW03D", name: "Dahod Expressway Plaza", city: "Gujarat", lat: 22.8300, lng: 74.2500, chargerType: "fast", power: 120, totalChargers: 6, avgChargeDuration: 30, pricePerKWh: 15, operator: "Tata Power EZ" },
+  { id: "JIW05A", name: "Vapi Highway Services", city: "Gujarat", lat: 20.3700, lng: 72.9100, chargerType: "fast", power: 150, totalChargers: 6, avgChargeDuration: 25, pricePerKWh: 17, operator: "Fortum" },
 ];
 
 export function generateStations(): ChargingStation[] {

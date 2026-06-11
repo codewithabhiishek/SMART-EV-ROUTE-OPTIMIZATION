@@ -73,10 +73,11 @@ export default function MapView({
     }).addTo(map);
     markersRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
+    const markersMap = markersMapRef.current;
     return () => {
       map.remove();
       mapRef.current = null;
-      markersMapRef.current.clear();
+      markersMap.clear();
     };
   }, []);
 

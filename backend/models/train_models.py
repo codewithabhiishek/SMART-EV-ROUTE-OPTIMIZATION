@@ -92,7 +92,10 @@ class WaitTimePredictor:
         peak_factor = np.where(data["is_peak_hour"] == 1, 1.3, 1.0)
         weekend_factor = np.where(data["is_weekend"] == 1, 0.9, 1.0)
 
-        data["estimated_wait_time"] = np.clip(base_wait * peak_factor * weekend_factor + np.random.normal(0, 2, len(data)), 0, 90).round(1)
+        # Ensure reproducible noise addition
+        rng = np.random.default_rng(42)
+        noise = rng.normal(0, 2, len(data))
+        data["estimated_wait_time"] = np.clip(base_wait * peak_factor * weekend_factor + noise, 0, 90).round(1)
 
         X = data[self.FEATURE_COLS]
         y = data["estimated_wait_time"]
@@ -227,6 +230,10 @@ class StationScorer:
         Simulates user choice behavior — users tend to pick stations with
         better overall utility (low wait + close + cheap + powerful).
         """
+        # Seed both random modules for reproducible scenario generation
+        random.seed(42)
+        np.random.seed(42)
+
         df = pd.read_csv(station_data_path)
         scenarios = []
 

@@ -133,11 +133,28 @@ const rawStations: Omit<ChargingStation, "availableChargers" | "occupiedChargers
   { id: "JIW05A", name: "Vapi Highway Services", city: "Gujarat", lat: 20.3700, lng: 72.9100, chargerType: "fast", power: 150, totalChargers: 6, avgChargeDuration: 25, pricePerKWh: 17, operator: "Fortum" },
 ];
 
+function seededRandom(seed: number): number {
+  const x = Math.sin(seed) * 10000;
+  return x - Math.floor(x);
+}
+
+function hashStringToInt(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash);
+}
+
 export function generateStations(): ChargingStation[] {
   return rawStations.map(s => {
-    const available = Math.floor(Math.random() * (s.totalChargers + 1));
+    const seed = hashStringToInt(s.id);
+    const randAvailable = seededRandom(seed);
+    const randWaiting = seededRandom(seed + 1);
+
+    const available = Math.floor(randAvailable * (s.totalChargers + 1));
     const occupied = s.totalChargers - available;
-    const waiting = available === 0 ? Math.floor(Math.random() * 4) : 0;
+    const waiting = available === 0 ? Math.floor(randWaiting * 4) : 0;
     return {
       ...s,
       availableChargers: available,

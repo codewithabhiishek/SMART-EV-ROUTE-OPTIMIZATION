@@ -1,5 +1,5 @@
 import type { EVVehicle } from "@/data/vehicles";
-import { DEFAULT_EFFICIENCY, DEFAULT_PRICE } from "@/lib/ev-constants";
+import { DEFAULT_PRICE } from "@/lib/ev-constants";
 
 export function formatMinutes(totalMinutes: number): string {
   const safeMinutes = Math.max(0, Math.round(totalMinutes));

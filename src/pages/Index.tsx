@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { toast } from "sonner";
 import MapView from "@/components/MapView";
 import Sidebar from "@/components/Sidebar";
 import StatusBar from "@/components/StatusBar";
@@ -64,11 +65,13 @@ export default function Index() {
         } else {
           setIsRouteActive(false);
           setRouteInfo(null);
+          toast.error("No valid route found between the selected locations.");
         }
       } catch (error) {
         console.error("Routing failed:", error);
         setIsRouteActive(false);
         setRouteInfo(null);
+        toast.error("Could not calculate route — please check your connection and try again.");
       } finally {
         setIsPlanningRoute(false);
       }

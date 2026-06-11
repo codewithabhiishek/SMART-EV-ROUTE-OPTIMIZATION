@@ -210,6 +210,7 @@ export default function Sidebar({
               stops={tripPlan?.stops.length}
               cost={tripPlan?.totalChargingCost}
               driveTime={tripPlan ? formatMinutes(tripPlan.totalDriveTimeMin) : undefined}
+              rangeAlert={tripPlan?.rangeAlert}
             />
 
             {/* Data transparency banner */}
@@ -638,16 +639,51 @@ function InputSelect({
   );
 }
 
-function SummaryHero({ distance, totalTime, stops, cost, driveTime }: { distance: string; totalTime: string; stops?: number; cost?: number; driveTime?: string }) {
+function SummaryHero({
+  distance,
+  totalTime,
+  stops,
+  cost,
+  driveTime,
+  rangeAlert,
+}: {
+  distance: string;
+  totalTime: string;
+  stops?: number;
+  cost?: number;
+  driveTime?: string;
+  rangeAlert?: "ok" | "last_station" | "no_station" | "route_gap";
+}) {
+  const isGap = rangeAlert === "route_gap";
   return (
-    <section className="glass-panel overflow-hidden p-4">
-      <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-        <Sparkles className="h-3.5 w-3.5 text-primary" />
-        Trip summary
+    <section className={`glass-panel overflow-hidden p-4 ${isGap ? "border-destructive/30" : ""}`}>
+      {isGap && (
+        <div className="mb-3 flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-2.5 text-xs font-semibold text-destructive animate-pulse">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          Destination Unreachable: Route has a range gap!
+        </div>
+      )}
+      <div className={`mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] ${isGap ? "text-destructive" : "text-muted-foreground"}`}>
+        {isGap ? (
+          <>
+            <AlertTriangle className="h-3.5 w-3.5 text-destructive animate-pulse" />
+            Incomplete Route (Range Gap)
+          </>
+        ) : (
+          <>
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
+            Trip summary
+          </>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-2">
         <SummaryMetric label="Distance" value={distance} />
-        <SummaryMetric label="Total Time" value={totalTime} highlighted />
+        <SummaryMetric
+          label={isGap ? "Time to Gap" : "Total Time"}
+          value={totalTime}
+          highlighted={!isGap}
+          destructive={isGap}
+        />
         {stops !== undefined && stops > 0 && (
           <>
             <SummaryMetric label="Charging Stops" value={`${stops}`} />
@@ -659,10 +695,38 @@ function SummaryHero({ distance, totalTime, stops, cost, driveTime }: { distance
   );
 }
 
-function SummaryMetric({ label, value, highlighted, accent }: { label: string; value: string; highlighted?: boolean; accent?: boolean }) {
+function SummaryMetric({
+  label,
+  value,
+  highlighted,
+  accent,
+  destructive,
+}: {
+  label: string;
+  value: string;
+  highlighted?: boolean;
+  accent?: boolean;
+  destructive?: boolean;
+}) {
+  const borderBgClass = destructive
+    ? "border-destructive/35 bg-destructive/10"
+    : highlighted
+    ? "border-primary/35 bg-primary/10"
+    : accent
+    ? "border-accent/35 bg-accent/10"
+    : "border-border/40 bg-secondary/35";
+
+  const textClass = destructive
+    ? "text-destructive"
+    : accent
+    ? "text-accent"
+    : highlighted
+    ? "text-primary"
+    : "text-foreground";
+
   return (
-    <div className={`rounded-2xl border p-3 ${highlighted ? "border-primary/35 bg-primary/10" : accent ? "border-accent/35 bg-accent/10" : "border-border/40 bg-secondary/35"}`}>
-      <div className={`text-base font-semibold ${accent ? "text-accent" : highlighted ? "text-primary" : "text-foreground"}`}>{value}</div>
+    <div className={`rounded-2xl border p-3 ${borderBgClass}`}>
+      <div className={`text-base font-semibold ${textClass}`}>{value}</div>
       <div className="mt-1 text-[11px] text-muted-foreground">{label}</div>
     </div>
   );

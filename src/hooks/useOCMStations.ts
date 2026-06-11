@@ -41,6 +41,11 @@ function randomStatus(available: number, total: number): "available" | "busy" | 
   return "available";
 }
 
+function seededRandom(seed: number): number {
+  const x = Math.sin(seed) * 10000;
+  return x - Math.floor(x);
+}
+
 function mapOCMToStation(ocm: OCMStation): ChargingStation {
   const connections = ocm.Connections ?? [];
   const hasDC = connections.some((c) => c.CurrentTypeID === 10 || c.CurrentTypeID === 20);
@@ -48,9 +53,14 @@ function mapOCMToStation(ocm: OCMStation): ChargingStation {
   const chargerType: "fast" | "slow" | "both" = hasDC && hasAC ? "both" : hasDC ? "fast" : "slow";
   const maxPower = connections.reduce((max, c) => Math.max(max, c.PowerKW ?? 0), 0) || 22;
   const totalChargers = (ocm.NumberOfPoints ?? connections.reduce((sum, c) => sum + (c.Quantity ?? 1), 0)) || 2;
-  const available = Math.floor(Math.random() * (totalChargers + 1));
+  
+  const seed = ocm.ID;
+  const randAvailable = seededRandom(seed);
+  const randWaiting = seededRandom(seed + 1);
+
+  const available = Math.floor(randAvailable * (totalChargers + 1));
   const occupied = totalChargers - available;
-  const waiting = available === 0 ? Math.floor(Math.random() * 3) : 0;
+  const waiting = available === 0 ? Math.floor(randWaiting * 3) : 0;
   const avgChargeDuration = maxPower >= 100 ? 20 : maxPower >= 50 ? 35 : maxPower >= 22 ? 60 : 90;
   const pricePerKWh = maxPower >= 100 ? 20 : maxPower >= 50 ? 16 : maxPower >= 22 ? 13 : 12;
   const city = ocm.AddressInfo.Town || ocm.AddressInfo.StateOrProvince || "India";
@@ -247,6 +257,17 @@ export function useOCMStations(routeCoords: [number, number][] | null): OCMFetch
   useEffect(() => {
     doFetch();
   }, [doFetch]);
+
+  // Log warning if routeCoords is provided since the API-level route filtering is disabled
+  useEffect(() => {
+    if (routeCoords && routeCoords.length > 0) {
+      console.warn(
+        "[OCM] routeCoords passed to useOCMStations, but route-aware API fetching is disabled. " +
+        "The application intentionally fetches all India stations once and applies a 50 km corridor filter in the simulation layer " +
+        "to prevent redundant network requests and API rate limits."
+      );
+    }
+  }, [routeCoords]);
 
   return state;
 }

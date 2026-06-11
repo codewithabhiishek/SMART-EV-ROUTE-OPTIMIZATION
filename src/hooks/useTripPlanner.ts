@@ -179,7 +179,7 @@ function forwardBatterySimulation(
   const MAX_ITERATIONS = Math.max(30, maxPossibleStops);
 
   let iteration = 0;
-  let alreadyBoosted = false;
+  let lastBoostedPositionKm: number | null = null;
 
   while (currentPositionKm < routeDistanceKm && iteration < MAX_ITERATIONS) {
     iteration++;
@@ -224,14 +224,14 @@ function forwardBatterySimulation(
       });
 
       if (boostedCandidates.length > 0) {
-        if (alreadyBoosted) {
+        if (lastBoostedPositionKm === currentPositionKm) {
           console.warn(`[ChargeSim] ❌ Already boosted to 100% at pos=${currentPositionKm.toFixed(1)}km, but candidates still empty/rejected.`);
           return { kind: stops.length === 0 ? "no_station" : "route_gap", stops, firstReachableCount };
         }
         // We can reach stations by charging to 100% — boost current energy
         console.log(`[ChargeSim] ⚡ No stations at 80% range (${safeRange.toFixed(0)}km), boosting to 100% (${boostedRange.toFixed(0)}km) — found ${boostedCandidates.length} candidates`);
         currentEnergy = maxEnergy;
-        alreadyBoosted = true;
+        lastBoostedPositionKm = currentPositionKm;
         continue; // re-run this iteration with boosted energy
       }
 
@@ -294,8 +294,17 @@ function forwardBatterySimulation(
       pool.sort((a, b) => {
         const aDist = a.routeProgressKm - currentPositionKm;
         const bDist = b.routeProgressKm - currentPositionKm;
-        if (Math.abs(aDist - bDist) > PROGRESS_WINDOW_KM) return bDist - aDist;
-        return a.station.score - b.station.score;
+        const diff = Math.abs(aDist - bDist);
+        if (diff > PROGRESS_WINDOW_KM + 0.001) {
+          return bDist - aDist; // prefer farther progress
+        }
+        // If within the progress window, prefer lower score (better)
+        const scoreDiff = a.station.score - b.station.score;
+        if (Math.abs(scoreDiff) > 0.0001) {
+          return scoreDiff;
+        }
+        // Stabilise ties: prefer farther progress if scores are equal
+        return bDist - aDist;
       });
       chosen = pool[0];
     }
@@ -326,7 +335,7 @@ function forwardBatterySimulation(
     let targetEnergy = defaultTargetEnergy;
     if (nextStations.length > 0) {
       const nearest = nextStations.reduce((a, b) => a.routeProgressKm < b.routeProgressKm ? a : b);
-      const distToNext = nearest.routeProgressKm - chosen.routeProgressKm + nearest.distFromRouteKm + chosen.distFromRouteKm;
+      const distToNext = nearest.routeProgressKm - chosen.routeProgressKm + chosen.distFromRouteKm * 2 + nearest.distFromRouteKm;
       const energyNeededForNext = (distToNext / efficiency) + minEnergy;
       if (energyNeededForNext > defaultTargetEnergy) {
         targetEnergy = Math.min(batteryCapacity, energyNeededForNext * 1.05); // 5% buffer
@@ -396,7 +405,7 @@ function forwardBatterySimulation(
     // STRICT: update position and energy — NO jumps
     currentEnergy = energyAfterCharge;
     currentPositionKm = chosen.routeProgressKm;
-    alreadyBoosted = false;
+    lastBoostedPositionKm = null;
 
     // Sanity check: position must have advanced
     if (distToStation < 1) {

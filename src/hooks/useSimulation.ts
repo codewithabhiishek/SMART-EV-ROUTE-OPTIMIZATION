@@ -306,6 +306,10 @@ export function useSimulation() {
     };
   }, [simConfig]);
 
+  const allStationsLength = allStations.length;
+  const firstStationId = allStations[0]?.id;
+  const lastStationId = allStations[allStations.length - 1]?.id;
+
   const spatialDistances = useMemo(() => {
     const cache = new Map<string, { distanceFromRoute: number; startDistanceKm: number; routeProgressKm: number }>();
     
@@ -327,11 +331,12 @@ export function useSimulation() {
       }
     }
     return cache;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     routeCoords,
-    allStations.length,
-    allStations[0]?.id,
-    allStations[allStations.length - 1]?.id,
+    allStationsLength,
+    firstStationId,
+    lastStationId,
   ]);
 
   const scoredStations = useMemo(() => {
@@ -393,12 +398,35 @@ export function useSimulation() {
         traffic_level: simConfig.trafficLevel,
         distance_from_route: cached.distanceFromRoute,
         start_distance_km: cached.startDistanceKm,
-        reachable: cached.distanceFromRoute <= 50, // within route corridor
+        reachable: false, // will be computed below by BFS progressive hops
         score: Math.round(score * 1000) / 1000,
         routeProgressKm: cached.routeProgressKm,
         rating: Math.round(rating * 10) / 10,
       };
     });
+
+    if (routeCoords && routeCoords.length > 1) {
+      const cumulDists = getCumulativeDistances(routeCoords);
+      const routeDistanceKm = cumulDists[cumulDists.length - 1];
+      const initialRange = vehicle ? calculateRange(vehicle, batteryLevel) : 200;
+      const hopRange = vehicle ? calculateRange(vehicle, 100) : 250;
+      
+      const { reachableIds } = getProgressivelyReachableIds(
+        scored,
+        initialRange,
+        hopRange,
+        routeDistanceKm
+      );
+      
+      scored.forEach((station) => {
+        station.reachable = reachableIds.has(station.id);
+      });
+    } else {
+      // If no route is active, all stations default to reachable
+      scored.forEach((station) => {
+        station.reachable = true;
+      });
+    }
 
     // Only show stations near the route corridor (50km)
     // Keep routeProgressKm in filtered list for useTripPlanner!
@@ -429,7 +457,7 @@ export function useSimulation() {
     }
 
     return filtered;
-  }, [allStations, simConfig, routeCoords, spatialDistances]);
+  }, [allStations, simConfig, routeCoords, spatialDistances, vehicle, batteryLevel]);
 
 
   useEffect(() => {
@@ -456,7 +484,8 @@ export function useSimulation() {
     );
     console.table(debugRows);
     console.groupEnd();
-  }, [routeCoords, vehicle, batteryLevel, allStations.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeCoords, vehicle, batteryLevel, allStationsLength]);
 
   const updateRoute = useCallback((coords: [number, number][]) => {
     setRouteCoords(coords);

@@ -202,6 +202,7 @@ def generate_synthetic_data(num_days: int = 14, stations_count: int = 60):
     Generate synthetic training data simulating 2 weeks of station usage.
     This allows you to train ML models even without 2 weeks of real data.
     """
+    random.seed(42)
     print(f"\n🧪 Generating synthetic data: {num_days} days × {stations_count} stations...")
 
     # Create realistic Indian EV stations

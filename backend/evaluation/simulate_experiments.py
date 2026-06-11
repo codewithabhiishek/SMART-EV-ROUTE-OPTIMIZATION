@@ -537,11 +537,16 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
             def smart_cmp(item1, item2):
                 dist1 = item1[2]
                 dist2 = item2[2]
-                if abs(dist1 - dist2) > 50.0:
+                diff = abs(dist1 - dist2)
+                if diff > 50.001:
                     return 1 if dist1 < dist2 else -1
                 s1 = item1[0]["station"]["score"]
                 s2 = item2[0]["station"]["score"]
-                return -1 if s1 < s2 else (1 if s1 > s2 else 0)
+                score_diff = s1 - s2
+                if abs(score_diff) > 0.0001:
+                    return -1 if s1 < s2 else 1
+                # Tie-breaker: prefer farther progress (larger distance)
+                return 1 if dist1 < dist2 else (-1 if dist1 > dist2 else 0)
                 
             pool.sort(key=cmp_to_key(smart_cmp))
             chosen_tuple = pool[0]
@@ -554,11 +559,16 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
             def ml_smart_cmp(item1, item2):
                 dist1 = item1[2]
                 dist2 = item2[2]
-                if abs(dist1 - dist2) > 50.0:
+                diff = abs(dist1 - dist2)
+                if diff > 50.001:
                     return 1 if dist1 < dist2 else -1
                 s1 = item1[0]["station"].get("score_ml", item1[0]["station"]["score"])
                 s2 = item2[0]["station"].get("score_ml", item2[0]["station"]["score"])
-                return -1 if s1 < s2 else (1 if s1 > s2 else 0)
+                score_diff = s1 - s2
+                if abs(score_diff) > 0.0001:
+                    return -1 if s1 < s2 else 1
+                # Tie-breaker: prefer farther progress (larger distance)
+                return 1 if dist1 < dist2 else (-1 if dist1 > dist2 else 0)
                 
             pool.sort(key=cmp_to_key(ml_smart_cmp))
             chosen_tuple = pool[0]

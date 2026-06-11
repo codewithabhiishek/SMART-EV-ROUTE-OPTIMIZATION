@@ -1,0 +1,292 @@
+{
+  "baseline_normal": {
+    "greedy": {
+      "success_rate": 59.4,
+      "time": {
+        "mean": 5.47,
+        "ci_lower": 5.21,
+        "ci_upper": 5.74
+      },
+      "cost": {
+        "mean": 433.75,
+        "ci_lower": 401.8,
+        "ci_upper": 465.7
+      },
+      "stops": {
+        "mean": 2.7,
+        "ci_lower": 2.51,
+        "ci_upper": 2.88
+      }
+    },
+    "cheapest": {
+      "success_rate": 59.4,
+      "time": {
+        "mean": 5.14,
+        "ci_lower": 4.91,
+        "ci_upper": 5.38
+      },
+      "cost": {
+        "mean": 382.67,
+        "ci_lower": 353.04,
+        "ci_upper": 412.3
+      },
+      "stops": {
+        "mean": 1.48,
+        "ci_lower": 1.37,
+        "ci_upper": 1.59
+      }
+    },
+    "fastest": {
+      "success_rate": 59.6,
+      "time": {
+        "mean": 4.95,
+        "ci_lower": 4.71,
+        "ci_upper": 5.18
+      },
+      "cost": {
+        "mean": 430.77,
+        "ci_lower": 399.93,
+        "ci_upper": 461.61
+      },
+      "stops": {
+        "mean": 1.74,
+        "ci_lower": 1.63,
+        "ci_upper": 1.86
+      }
+    },
+    "smart": {
+      "success_rate": 59.6,
+      "time": {
+        "mean": 4.85,
+        "ci_lower": 4.64,
+        "ci_upper": 5.06
+      },
+      "cost": {
+        "mean": 389.28,
+        "ci_lower": 360.9,
+        "ci_upper": 417.67
+      },
+      "stops": {
+        "mean": 1.15,
+        "ci_lower": 1.07,
+        "ci_upper": 1.24
+      }
+    },
+    "ablation_dist": {
+      "success_rate": 59.6,
+      "time": {
+        "mean": 4.85,
+        "ci_lower": 4.64,
+        "ci_upper": 5.06
+      },
+      "cost": {
+        "mean": 389.43,
+        "ci_lower": 361.05,
+        "ci_upper": 417.82
+      },
+      "stops": {
+        "mean": 1.15,
+        "ci_lower": 1.07,
+        "ci_upper": 1.24
+      }
+    },
+    "ablation_dist_traffic": {
+      "success_rate": 59.6,
+      "time": {
+        "mean": 4.85,
+        "ci_lower": 4.64,
+        "ci_upper": 5.06
+      },
+      "cost": {
+        "mean": 389.2,
+        "ci_lower": 360.81,
+        "ci_upper": 417.59
+      },
+      "stops": {
+        "mean": 1.15,
+        "ci_lower": 1.07,
+        "ci_upper": 1.24
+      }
+    },
+    "ablation_dist_traffic_price": {
+      "success_rate": 59.6,
+      "time": {
+        "mean": 4.85,
+        "ci_lower": 4.64,
+        "ci_upper": 5.06
+      },
+      "cost": {
+        "mean": 387.43,
+        "ci_lower": 358.99,
+        "ci_upper": 415.88
+      },
+      "stops": {
+        "mean": 1.15,
+        "ci_lower": 1.07,
+        "ci_upper": 1.24
+      }
+    }
+  },
+  "sensitivity_analysis": {
+    "Low": {
+      "greedy": {
+        "success_rate": 59.0,
+        "mean_time_hours": 5.04,
+        "mean_cost_inr": 422.02
+      },
+      "cheapest": {
+        "success_rate": 59.0,
+        "mean_time_hours": 4.8,
+        "mean_cost_inr": 374.39
+      },
+      "fastest": {
+        "success_rate": 59.2,
+        "mean_time_hours": 4.69,
+        "mean_cost_inr": 421.93
+      },
+      "smart": {
+        "success_rate": 59.2,
+        "mean_time_hours": 4.66,
+        "mean_cost_inr": 383.47
+      }
+    },
+    "Normal": {
+      "greedy": {
+        "success_rate": 59.4,
+        "mean_time_hours": 5.47,
+        "mean_cost_inr": 433.75
+      },
+      "cheapest": {
+        "success_rate": 59.4,
+        "mean_time_hours": 5.14,
+        "mean_cost_inr": 382.67
+      },
+      "fastest": {
+        "success_rate": 59.6,
+        "mean_time_hours": 4.95,
+        "mean_cost_inr": 430.77
+      },
+      "smart": {
+        "success_rate": 59.6,
+        "mean_time_hours": 4.85,
+        "mean_cost_inr": 389.28
+      }
+    },
+    "Heavy": {
+      "greedy": {
+        "success_rate": 61.6,
+        "mean_time_hours": 6.45,
+        "mean_cost_inr": 418.72
+      },
+      "cheapest": {
+        "success_rate": 61.6,
+        "mean_time_hours": 5.57,
+        "mean_cost_inr": 371.29
+      },
+      "fastest": {
+        "success_rate": 62.0,
+        "mean_time_hours": 5.55,
+        "mean_cost_inr": 419.77
+      },
+      "smart": {
+        "success_rate": 62.4,
+        "mean_time_hours": 5.26,
+        "mean_cost_inr": 381.88
+      }
+    },
+    "Extreme": {
+      "greedy": {
+        "success_rate": 59.2,
+        "mean_time_hours": 7.25,
+        "mean_cost_inr": 439.08
+      },
+      "cheapest": {
+        "success_rate": 59.2,
+        "mean_time_hours": 6.18,
+        "mean_cost_inr": 386.67
+      },
+      "fastest": {
+        "success_rate": 59.2,
+        "mean_time_hours": 6.0,
+        "mean_cost_inr": 435.11
+      },
+      "smart": {
+        "success_rate": 59.2,
+        "mean_time_hours": 5.67,
+        "mean_cost_inr": 394.11
+      }
+    }
+  },
+  "weight_sensitivity_sweep": [
+    {
+      "Wait Weight": "10%",
+      "Wait Weight Float": 0.1,
+      "Mean Travel Time (Hours)": 4.842337807606264,
+      "Success Rate": 0.596
+    },
+    {
+      "Wait Weight": "20%",
+      "Wait Weight Float": 0.2,
+      "Mean Travel Time (Hours)": 4.84035234899329,
+      "Success Rate": 0.596
+    },
+    {
+      "Wait Weight": "30%",
+      "Wait Weight Float": 0.3,
+      "Mean Travel Time (Hours)": 4.84035234899329,
+      "Success Rate": 0.596
+    },
+    {
+      "Wait Weight": "40%",
+      "Wait Weight Float": 0.4,
+      "Mean Travel Time (Hours)": 4.8401286353467565,
+      "Success Rate": 0.596
+    },
+    {
+      "Wait Weight": "50%",
+      "Wait Weight Float": 0.5,
+      "Mean Travel Time (Hours)": 4.8401286353467565,
+      "Success Rate": 0.596
+    }
+  ],
+  "paired_t_tests": {
+    "greedy": {
+      "n_paired_samples": 594,
+      "time": {
+        "t_statistic": -14.5744,
+        "p_value": 2.392586096993699e-41
+      },
+      "cost": {
+        "t_statistic": -12.0523,
+        "p_value": 4.491450156589715e-30
+      }
+    },
+    "cheapest": {
+      "n_paired_samples": 594,
+      "time": {
+        "t_statistic": -12.8275,
+        "p_value": 2.0442319530599918e-33
+      },
+      "cost": {
+        "t_statistic": 2.7595,
+        "p_value": 0.005968439720131104
+      }
+    },
+    "fastest": {
+      "n_paired_samples": 596,
+      "time": {
+        "t_statistic": -4.108,
+        "p_value": 4.550829619479891e-05
+      },
+      "cost": {
+        "t_statistic": -15.4438,
+        "p_value": 1.706536120679754e-45
+      }
+    }
+  },
+  "ablation_contributions": {
+    "traffic_awareness_pct": 107.1,
+    "price_awareness_pct": 6.1,
+    "wait_power_awareness_pct": -13.1
+  }
+}

@@ -1,0 +1,273 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 7%;
+    --foreground: 210 20% 92%;
+
+    --card: 220 18% 10%;
+    --card-foreground: 210 20% 92%;
+
+    --popover: 220 18% 12%;
+    --popover-foreground: 210 20% 92%;
+
+    --primary: 162 78% 45%;
+    --primary-foreground: 220 20% 7%;
+
+    --secondary: 220 16% 16%;
+    --secondary-foreground: 210 20% 85%;
+
+    --muted: 220 14% 14%;
+    --muted-foreground: 215 12% 55%;
+
+    --accent: 38 92% 55%;
+    --accent-foreground: 220 20% 7%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 220 14% 18%;
+    --input: 220 14% 18%;
+    --ring: 162 78% 45%;
+
+    --radius: 0.75rem;
+
+    --station-available: 142 72% 50%;
+    --station-busy: 38 92% 55%;
+    --station-full: 0 72% 55%;
+
+    --glow-primary: 0 0 20px hsl(162 78% 45% / 0.4);
+    --glow-accent: 0 0 20px hsl(38 92% 55% / 0.4);
+    --glow-available: 0 0 15px hsl(142 72% 50% / 0.5);
+    --glow-busy: 0 0 15px hsl(38 92% 55% / 0.5);
+    --glow-full: 0 0 15px hsl(0 72% 55% / 0.5);
+
+    --sidebar-background: 220 18% 8%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-primary: 162 78% 45%;
+    --sidebar-primary-foreground: 220 20% 7%;
+    --sidebar-accent: 220 16% 14%;
+    --sidebar-accent-foreground: 210 20% 85%;
+    --sidebar-border: 220 14% 18%;
+    --sidebar-ring: 162 78% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-card/80 backdrop-blur-xl border border-border/50 rounded-xl;
+  }
+  .glow-green {
+    box-shadow: var(--glow-available);
+  }
+  .glow-yellow {
+    box-shadow: var(--glow-busy);
+  }
+  .glow-red {
+    box-shadow: var(--glow-full);
+  }
+  .glow-primary {
+    box-shadow: var(--glow-primary);
+  }
+  .status-dot {
+    @apply w-2.5 h-2.5 rounded-full;
+  }
+  .status-available {
+    @apply bg-green-400;
+    box-shadow: var(--glow-available);
+  }
+  .status-busy {
+    @apply bg-amber-400;
+    box-shadow: var(--glow-busy);
+  }
+  .status-full {
+    @apply bg-red-400;
+    box-shadow: var(--glow-full);
+  }
+  .hover-scale {
+    @apply transition-transform duration-200 hover:scale-[1.02];
+  }
+  .data-label {
+    @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider;
+  }
+  .data-label-real {
+    @apply data-label border border-primary/30 bg-primary/10 text-primary;
+  }
+  .data-label-simulated {
+    @apply data-label border border-accent/30 bg-accent/10 text-accent;
+  }
+}
+
+@layer utilities {
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+  .animate-slide-up {
+    animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes slide-up {
+    from { transform: translateY(12px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .animate-slide-in-left {
+    animation: slide-in-left 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes slide-in-left {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(220 14% 22%) transparent;
+  }
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* ── Leaflet ── */
+.leaflet-container {
+  background: hsl(220 20% 4%) !important;
+  height: 100%;
+  width: 100%;
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  overflow: hidden;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 24px hsl(0 0% 0% / 0.4) !important;
+}
+
+.leaflet-control-zoom a {
+  background: hsl(220 18% 12%) !important;
+  color: hsl(210 20% 80%) !important;
+  border-color: hsl(220 14% 18%) !important;
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 36px !important;
+  font-size: 16px !important;
+  transition: background 0.15s;
+}
+
+.leaflet-control-zoom a:hover {
+  background: hsl(220 18% 18%) !important;
+  color: hsl(162 78% 45%) !important;
+}
+
+.leaflet-control-attribution {
+  background: hsl(220 18% 10% / 0.8) !important;
+  color: hsl(215 12% 45%) !important;
+  font-size: 9px !important;
+  border-radius: 6px 0 0 0 !important;
+  padding: 2px 6px !important;
+}
+
+.leaflet-control-attribution a {
+  color: hsl(162 78% 45%) !important;
+}
+
+/* ── Map Markers ── */
+.custom-marker {
+  background: none;
+  border: none;
+}
+
+.custom-tooltip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.custom-tooltip::before {
+  display: none !important;
+}
+
+.station-marker {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: hsl(220 20% 7%);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s;
+  cursor: pointer;
+  border: 2px solid hsl(0 0% 100% / 0.15);
+}
+
+.station-marker:hover {
+  transform: scale(1.35);
+  z-index: 999 !important;
+}
+
+.station-marker.available {
+  background: radial-gradient(circle at 35% 35%, hsl(142 72% 65%), hsl(142 72% 45%));
+  box-shadow: 0 0 20px hsl(142 72% 50% / 0.55), inset 0 1px 2px hsl(0 0% 100% / 0.2);
+}
+
+.station-marker.busy {
+  background: radial-gradient(circle at 35% 35%, hsl(38 92% 70%), hsl(38 92% 50%));
+  box-shadow: 0 0 20px hsl(38 92% 55% / 0.55), inset 0 1px 2px hsl(0 0% 100% / 0.2);
+}
+
+.station-marker.full {
+  background: radial-gradient(circle at 35% 35%, hsl(0 72% 65%), hsl(0 72% 48%));
+  box-shadow: 0 0 20px hsl(0 72% 55% / 0.55), inset 0 1px 2px hsl(0 0% 100% / 0.2);
+}
+
+.station-marker.recommended {
+  background: radial-gradient(circle at 35% 35%, hsl(162 78% 60%), hsl(162 78% 40%));
+  box-shadow: 0 0 28px hsl(162 78% 45% / 0.7), 0 0 8px hsl(162 78% 60% / 0.4);
+  border: 2px solid hsl(162 78% 65%);
+  animation: marker-pulse 2s ease-in-out infinite;
+}
+
+@keyframes marker-pulse {
+  0%, 100% { box-shadow: 0 0 28px hsl(162 78% 45% / 0.7), 0 0 8px hsl(162 78% 60% / 0.4); }
+  50% { box-shadow: 0 0 40px hsl(162 78% 45% / 0.9), 0 0 16px hsl(162 78% 60% / 0.6); }
+}
+
+.station-marker.recommended-alt {
+  background: radial-gradient(circle at 35% 35%, hsl(162 78% 55%), hsl(162 78% 35%));
+  box-shadow: 0 0 18px hsl(162 78% 45% / 0.5);
+  border: 2px solid hsl(162 78% 50%);
+  font-size: 10px;
+}
+
+.station-marker.first-hop {
+  box-shadow: 0 0 0 3px hsl(38 92% 55% / 0.35), 0 0 22px hsl(38 92% 55% / 0.45);
+}
+
+.station-marker.unreachable {
+  opacity: 0.4;
+  filter: grayscale(0.6);
+}

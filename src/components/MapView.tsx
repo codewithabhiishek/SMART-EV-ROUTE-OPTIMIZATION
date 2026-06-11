@@ -260,6 +260,7 @@ export default function MapView({
       mapRef.current.fitBounds(routeLayerRef.current.getBounds(), {
         padding: (window.innerWidth < 768
           ? [40, 20, Math.round(window.innerHeight * 0.5) + 20, 20]
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           : [60, 60, 60, 440]) as any,
       });
     }

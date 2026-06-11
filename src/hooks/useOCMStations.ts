@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChargingStation } from "@/data/stations";
 
-const OCM_API_KEY = "8319340c-aec7-4331-877b-24327238fc5d";
+const OCM_API_KEY = import.meta.env.VITE_OCM_API_KEY || "";
 const OCM_BASE_URL = "https://api.openchargemap.io/v3/poi";
 
 // How many sample points along the route to fetch stations around

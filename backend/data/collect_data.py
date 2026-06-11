@@ -21,7 +21,19 @@ from pathlib import Path
 
 import requests
 
-OCM_API_KEY = "8319340c-aec7-4331-877b-24327238fc5d"
+def load_env_key():
+    key = os.environ.get("OCM_API_KEY") or os.environ.get("VITE_OCM_API_KEY")
+    if key:
+        return key
+    env_path = Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("VITE_OCM_API_KEY="):
+                    return line.strip().split("=", 1)[1].strip()
+    return ""
+
+OCM_API_KEY = load_env_key()
 OCM_BASE_URL = "https://api.openchargemap.io/v3/poi"
 DATA_DIR = Path(__file__).parent / "collected"
 DATA_DIR.mkdir(exist_ok=True)

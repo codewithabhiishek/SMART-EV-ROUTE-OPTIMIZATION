@@ -25,6 +25,7 @@ export interface ScoredStation extends ChargingStation {
   reachable: boolean;
   score: number;
   rank?: number;
+  routeProgressKm?: number;
 }
 
 export interface RerouteSuggestion {
@@ -37,6 +38,7 @@ export interface RerouteSuggestion {
 interface RoutedStation extends ScoredStation {
   routeProgressKm: number;
 }
+
 
 function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
@@ -210,6 +212,11 @@ export function useSimulation() {
   const [vehicle, setVehicle] = useState<EVVehicle | null>(null);
   const simInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const spatialCacheRef = useRef<{
+    routeCoords: [number, number][] | null;
+    distances: Map<string, { distanceFromRoute: number; startDistanceKm: number; routeProgressKm: number }>;
+  }>({ routeCoords: null, distances: new Map() });
+
   // Load real OCM stations once fetched
   useEffect(() => {
     if (!stationsLoading && ocmStations.length > 0) {
@@ -289,13 +296,40 @@ export function useSimulation() {
     const hopBatteryLevel = vehicle ? Math.max(batteryLevel, RECHARGE_TARGET_BATTERY) : 100;
     const hopRangeKm = vehicle ? calculateRange(vehicle, hopBatteryLevel) * FIRST_HOP_SAFETY_FACTOR : Infinity;
     const firstHopAllowedKm = initialRangeKm * FIRST_HOP_SAFETY_FACTOR;
-    const cumulDists = routeCoords && routeCoords.length > 1 ? getCumulativeDistances(routeCoords) : null;
-    const routeDistanceKm = cumulDists ? cumulDists[cumulDists.length - 1] : 0;
+
+    // Check if route or stations changed to rebuild spatial cache
+    const coordsChanged = routeCoords !== spatialCacheRef.current.routeCoords;
+    const stationsChanged = allStations.length !== spatialCacheRef.current.distances.size;
+
+    if (coordsChanged || stationsChanged) {
+      const cache = new Map<string, { distanceFromRoute: number; startDistanceKm: number; routeProgressKm: number }>();
+      
+      if (routeCoords && routeCoords.length > 1) {
+        console.log(`[Sim] Rebuilding spatial cache for ${allStations.length} stations along ${routeCoords.length}-point route...`);
+        const cumulDists = getCumulativeDistances(routeCoords);
+        for (const station of allStations) {
+          const distanceFromRoute = distToPolyline([station.lat, station.lng], routeCoords);
+          const startDistanceKm = haversine(routeCoords[0][0], routeCoords[0][1], station.lat, station.lng);
+          const routeProgressKm = getRouteProgress([station.lat, station.lng], routeCoords, cumulDists);
+          cache.set(station.id, { distanceFromRoute, startDistanceKm, routeProgressKm });
+        }
+      } else {
+        for (const station of allStations) {
+          cache.set(station.id, { distanceFromRoute: 0, startDistanceKm: 0, routeProgressKm: 0 });
+        }
+      }
+      spatialCacheRef.current = { routeCoords, distances: cache };
+    }
 
     console.log(`[Sim] timeMode=${simConfig.timeMode} traffic=${simConfig.trafficLevel} timeMult=${timeModeMultiplier} trafficMult=${trafficMultiplier.toFixed(2)}`);
 
     const scored: RoutedStation[] = allStations.map((station) => {
-      const distanceFromRoute = routeCoords && routeCoords.length > 1 ? distToPolyline([station.lat, station.lng], routeCoords) : 0;
+      const cached = spatialCacheRef.current.distances.get(station.id) || {
+        distanceFromRoute: 0,
+        startDistanceKm: 0,
+        routeProgressKm: 0,
+      };
+
       const rating = 3 + Math.sin(parseInt(station.id.replace(/\D/g, "") || "0", 10) * 1.7) * 1.5;
       const baseWait = getCurrentWaitTime(
         station.waitingVehicles,
@@ -322,16 +356,9 @@ export function useSimulation() {
         ),
       );
 
-      const startDistanceKm = routeCoords && routeCoords.length > 0
-        ? haversine(routeCoords[0][0], routeCoords[0][1], station.lat, station.lng)
-        : 0;
-      const routeProgressKm = routeCoords && cumulDists
-        ? getRouteProgress([station.lat, station.lng], routeCoords, cumulDists)
-        : startDistanceKm;
-
       const score = scoreStation(
         {
-          distance_from_route: distanceFromRoute,
+          distance_from_route: cached.distanceFromRoute,
           current_wait_time: currentWait,
           traffic_level: simConfig.trafficLevel,
           pricePerKWh: station.pricePerKWh,
@@ -346,18 +373,19 @@ export function useSimulation() {
         predicted_wait_time: predictedWait,
         congestion_level: congestion,
         traffic_level: simConfig.trafficLevel,
-        distance_from_route: distanceFromRoute,
-        start_distance_km: startDistanceKm,
-        reachable: distanceFromRoute <= 30, // within route corridor
+        distance_from_route: cached.distanceFromRoute,
+        start_distance_km: cached.startDistanceKm,
+        reachable: cached.distanceFromRoute <= 50, // within route corridor
         score: Math.round(score * 1000) / 1000,
-        routeProgressKm,
+        routeProgressKm: cached.routeProgressKm,
       };
     });
 
-    // Only show stations near the route corridor (30km)
-    let filtered: ScoredStation[] = scored.map(({ routeProgressKm: _rp, ...s }) => s);
+    // Only show stations near the route corridor (50km)
+    // Keep routeProgressKm in filtered list for useTripPlanner!
+    let filtered: ScoredStation[] = scored.map((s) => s);
     if (routeCoords && routeCoords.length > 1) {
-      filtered = filtered.filter((station) => station.distance_from_route <= 30);
+      filtered = filtered.filter((station) => (station.distance_from_route ?? 0) <= 50);
     }
 
     filtered.sort((a, b) => a.score - b.score);
@@ -383,6 +411,7 @@ export function useSimulation() {
 
     setScoredStations(filtered);
   }, [allStations, simConfig, batteryLevel, vehicle, routeCoords]);
+
 
   useEffect(() => {
     if (!import.meta.env.DEV || !vehicle || !routeCoords || routeCoords.length === 0 || allStations.length === 0) {

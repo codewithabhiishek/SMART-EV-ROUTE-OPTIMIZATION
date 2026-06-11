@@ -1,12 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { ScoredStation } from "@/hooks/useSimulation";
 import type { EVVehicle } from "@/data/vehicles";
 import { calculateRange } from "@/data/vehicles";
 import { getScoreWeights } from "@/lib/route-preferences";
 
+
 const MIN_BATTERY_PERCENT = 10; // never let battery drop below this
 const CHARGE_TARGET_PERCENT = 80; // charge up to this at each stop
-const ROUTE_CORRIDOR_KM = 30; // only consider stations within this distance from route
+const ROUTE_CORRIDOR_KM = 50; // only consider stations within this distance from route
 
 export interface ChargingStop {
   stop: number;
@@ -125,6 +126,7 @@ function forwardBatterySimulation(
   stations: ScoredStation[],
   cumulDists: number[],
   policy: RoutingPolicy = "smart",
+  projectionCache?: Map<string, { progressKm: number; distFromRouteKm: number }>,
 ): { kind: "ok" | "no_station" | "route_gap"; stops: ChargingStop[]; firstReachableCount: number } {
   const batteryCapacity = vehicle.battery_capacity;
   const efficiency = vehicle.efficiency; // km per kWh
@@ -144,7 +146,11 @@ function forwardBatterySimulation(
   // Project all stations onto route and scale to road distance
   const stationsOnRoute: StationOnRoute[] = stations
     .map((s) => {
-      const proj = projectOnRoute(s.lat, s.lng, routeCoords, cumulDists);
+      let proj = projectionCache?.get(s.id);
+      if (!proj) {
+        proj = projectOnRoute(s.lat, s.lng, routeCoords, cumulDists);
+        projectionCache?.set(s.id, proj);
+      }
       return {
         station: s,
         routeProgressKm: proj.progressKm * scaleFactor,
@@ -202,7 +208,26 @@ function forwardBatterySimulation(
     });
 
     if (candidates.length === 0) {
-      console.warn(`[ChargeSim] ❌ No safely reachable stations from pos=${currentPositionKm.toFixed(1)}km with safeRange=${safeRange.toFixed(1)}km`);
+      // ─── BOOST CHARGE: try charging to 100% to bridge the gap ───
+      const maxEnergy = batteryCapacity; // 100%
+      const boostedRange = Math.max(0, maxEnergy - minEnergy) * efficiency;
+      const boostedCandidates = stationsOnRoute.filter((s) => {
+        if (usedIds.has(s.station.id)) return false;
+        if (s.routeProgressKm <= currentPositionKm + 1) return false;
+        const distToStation = s.routeProgressKm - currentPositionKm;
+        const totalLegDist = distToStation + s.distFromRouteKm + prevDetour;
+        if (totalLegDist > boostedRange) return false;
+        return true;
+      });
+
+      if (boostedCandidates.length > 0) {
+        // We can reach stations by charging to 100% — boost current energy
+        console.log(`[ChargeSim] ⚡ No stations at 80% range (${safeRange.toFixed(0)}km), boosting to 100% (${boostedRange.toFixed(0)}km) — found ${boostedCandidates.length} candidates`);
+        currentEnergy = maxEnergy;
+        continue; // re-run this iteration with boosted energy
+      }
+
+      console.warn(`[ChargeSim] ❌ No safely reachable stations from pos=${currentPositionKm.toFixed(1)}km even at 100% charge (${boostedRange.toFixed(1)}km)`);
       return { kind: stops.length === 0 ? "no_station" : "route_gap", stops, firstReachableCount };
     }
 
@@ -283,8 +308,31 @@ function forwardBatterySimulation(
     const energyOnArrival = Math.max(0, currentEnergy - energyUsed);
     const batteryOnArrival = (energyOnArrival / batteryCapacity) * 100;
 
-    // ─── ALWAYS charge to 80% at every stop ───
-    const targetEnergy = batteryCapacity * (CHARGE_TARGET_PERCENT / 100);
+    // ─── SMART CHARGE TARGET: 80% normally, up to 100% if next station is far ───
+    const defaultTargetEnergy = batteryCapacity * (CHARGE_TARGET_PERCENT / 100);
+    // Look ahead: find the nearest UNUSED station after this one
+    const nextStations = stationsOnRoute.filter((s) => {
+      if (usedIds.has(s.station.id) || s.station.id === chosen.station.id) return false;
+      return s.routeProgressKm > chosen.routeProgressKm + 1;
+    });
+    let targetEnergy = defaultTargetEnergy;
+    if (nextStations.length > 0) {
+      const nearest = nextStations.reduce((a, b) => a.routeProgressKm < b.routeProgressKm ? a : b);
+      const distToNext = nearest.routeProgressKm - chosen.routeProgressKm + nearest.distFromRouteKm + chosen.distFromRouteKm;
+      const energyNeededForNext = (distToNext / efficiency) + minEnergy;
+      if (energyNeededForNext > defaultTargetEnergy) {
+        targetEnergy = Math.min(batteryCapacity, energyNeededForNext * 1.05); // 5% buffer
+        console.log(`[ChargeSim] 🔋 Boosting charge target to ${(targetEnergy / batteryCapacity * 100).toFixed(0)}% to reach ${nearest.station.name} (${distToNext.toFixed(0)}km away)`);
+      }
+    } else {
+      // No more stations ahead — charge enough to reach destination
+      const distToEnd = routeDistanceKm - chosen.routeProgressKm + chosen.distFromRouteKm;
+      const energyNeededForEnd = (distToEnd / efficiency) + minEnergy;
+      if (energyNeededForEnd > defaultTargetEnergy) {
+        targetEnergy = Math.min(batteryCapacity, energyNeededForEnd * 1.05);
+        console.log(`[ChargeSim] 🔋 Boosting charge target to ${(targetEnergy / batteryCapacity * 100).toFixed(0)}% to reach destination (${distToEnd.toFixed(0)}km away)`);
+      }
+    }
     const energyToCharge = Math.max(0, targetEnergy - energyOnArrival);
 
     // If no charging needed (already above target), still move forward
@@ -415,8 +463,18 @@ export function useTripPlanner(
   routeDistanceKm: number | null,
   driveDurationMin: number | null,
 ) {
+  const projectionCacheRef = useRef<Map<string, { progressKm: number; distFromRouteKm: number }>>(new Map());
+  const prevRouteRef = useRef<[number, number][] | null>(null);
+
   const tripPlan = useMemo<TripPlan | null>(() => {
     if (!vehicle || !routeCoords || routeCoords.length < 2 || !routeDistanceKm || !driveDurationMin) return null;
+
+    // Reset projection cache on route change
+    const routeChanged = prevRouteRef.current !== routeCoords;
+    if (routeChanged) {
+      projectionCacheRef.current.clear();
+      prevRouteRef.current = routeCoords;
+    }
 
     // Calculate consistent distance first so it's ready for all returns
     const cumulDists: number[] = [0];
@@ -453,7 +511,9 @@ export function useTripPlanner(
       routeCoords,
       routeDistanceKm,
       stations,
-      cumulDists
+      cumulDists,
+      "smart",
+      projectionCacheRef.current
     );
 
     if (result.kind === "no_station") {
@@ -510,7 +570,8 @@ export function useTripPlanner(
         routeDistanceKm,
         stations,
         cumulDists,
-        pol
+        pol,
+        projectionCacheRef.current
       );
       if (simResult.kind === "no_station" || simResult.stops.length === 0) {
         return { time: Math.round(driveDurationMin), cost: 0, stops: 0 };
@@ -537,6 +598,7 @@ export function useTripPlanner(
         stops: result.stops.length,
       },
     };
+
 
     return {
       stops: result.stops,

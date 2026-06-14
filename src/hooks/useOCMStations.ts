@@ -4,12 +4,6 @@ import type { ChargingStation } from "@/data/stations";
 const OCM_API_KEY = import.meta.env.VITE_OCM_API_KEY || "";
 const OCM_BASE_URL = "https://api.openchargemap.io/v3/poi";
 
-// How many sample points along the route to fetch stations around
-const ROUTE_SAMPLE_POINTS = 8;
-// Radius around each sample point (km)
-const SAMPLE_RADIUS_KM = 80;
-// Max results per sample fetch
-const PER_SAMPLE_MAX = 100;
 
 interface OCMConnection {
   PowerKW?: number;
@@ -90,67 +84,6 @@ export interface OCMFetchState {
   loading: boolean;
   error: string | null;
   source: "ocm" | "fallback";
-}
-
-/** Sample N evenly-spaced points along a route polyline */
-function sampleRoutePoints(coords: [number, number][], n: number): [number, number][] {
-  if (coords.length <= n) return coords;
-  const points: [number, number][] = [];
-  const step = (coords.length - 1) / (n - 1);
-  for (let i = 0; i < n; i++) {
-    const idx = Math.min(Math.round(i * step), coords.length - 1);
-    points.push(coords[idx]);
-  }
-  return points;
-}
-
-async function fetchStationsAroundPoint(
-  lat: number,
-  lng: number,
-  radiusKm: number,
-  maxResults: number,
-): Promise<OCMStation[]> {
-  const params = new URLSearchParams({
-    output: "json",
-    latitude: lat.toString(),
-    longitude: lng.toString(),
-    distance: radiusKm.toString(),
-    distanceunit: "KM",
-    maxresults: maxResults.toString(),
-    statustypeid: "50",
-    compact: "true",
-    verbose: "false",
-    key: OCM_API_KEY,
-  });
-
-  const response = await fetch(`${OCM_BASE_URL}?${params.toString()}`);
-  if (!response.ok) throw new Error(`OCM API error: ${response.status}`);
-  const data = await response.json();
-  return Array.isArray(data) ? data : [];
-}
-
-async function fetchStationsAlongRoute(routeCoords: [number, number][]): Promise<OCMStation[]> {
-  const samplePoints = sampleRoutePoints(routeCoords, ROUTE_SAMPLE_POINTS);
-  
-  // Fetch in parallel for all sample points
-  const results = await Promise.all(
-    samplePoints.map((point) =>
-      fetchStationsAroundPoint(point[0], point[1], SAMPLE_RADIUS_KM, PER_SAMPLE_MAX).catch(() => [] as OCMStation[])
-    )
-  );
-
-  // Deduplicate by station ID
-  const seen = new Set<number>();
-  const all: OCMStation[] = [];
-  for (const batch of results) {
-    for (const station of batch) {
-      if (!seen.has(station.ID)) {
-        seen.add(station.ID);
-        all.push(station);
-      }
-    }
-  }
-  return all;
 }
 
 let globalIndiaStations: ChargingStation[] | null = null;

@@ -70,13 +70,3 @@ export function estimateStationChargeCostSmart(
 
   return { cost, noChargeNeeded: false };
 }
-
-/** @deprecated Use estimateStationChargeCostSmart instead */
-export function estimateStationChargeCost(
-  vehicle: EVVehicle | null,
-  currentBatteryLevel: number,
-  pricePerKWh: number,
-  targetCharge = 80,
-): number {
-  return Math.round(estimateEnergyNeeded(vehicle, currentBatteryLevel, targetCharge) * pricePerKWh);
-}

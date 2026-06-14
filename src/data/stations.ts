@@ -166,35 +166,6 @@ export function generateStations(): ChargingStation[] {
   });
 }
 
-export function updateStationAvailability(station: ChargingStation): ChargingStation {
-  const change = Math.random() > 0.5 ? 1 : -1;
-  const available = Math.max(0, Math.min(station.totalChargers, station.availableChargers + change));
-  const occupied = station.totalChargers - available;
-  const waiting = available === 0 ? Math.max(0, station.waitingVehicles + (Math.random() > 0.5 ? 1 : -1)) : 0;
-  return {
-    ...station,
-    availableChargers: available,
-    occupiedChargers: occupied,
-    waitingVehicles: waiting,
-    status: randomStatus(available, station.totalChargers),
-  };
-}
-
-export function predictAvailability(station: ChargingStation, minutesAhead: number): { available: number; confidence: number } {
-  const chargingRate = station.avgChargeDuration;
-  const expectedFinish = Math.floor(station.occupiedChargers * (minutesAhead / chargingRate));
-  const expectedArrivals = Math.floor(Math.random() * 2);
-  const predicted = Math.min(station.totalChargers, Math.max(0, station.availableChargers + expectedFinish - expectedArrivals));
-  const confidence = minutesAhead <= 10 ? 85 : minutesAhead <= 20 ? 70 : 55;
-  return { available: predicted, confidence };
-}
-
-export function estimateWaitTime(station: ChargingStation): number {
-  if (station.availableChargers > 0) return 0;
-  const queuePosition = station.waitingVehicles + 1;
-  return Math.ceil((queuePosition * station.avgChargeDuration) / station.totalChargers);
-}
-
 export const INDIA_CITIES = [
   { name: "Delhi", lat: 28.6139, lng: 77.2090 },
   { name: "Mumbai", lat: 19.0760, lng: 72.8777 },

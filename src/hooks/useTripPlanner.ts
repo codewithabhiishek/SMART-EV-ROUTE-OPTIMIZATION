@@ -11,6 +11,19 @@ const ROUTE_CORRIDOR_KM = 50; // only consider stations within this distance fro
 const DETOUR_SPEED_KMH = 50; // average speed off-route
 const PROGRESS_WINDOW_KM = 50; // threshold window (km) to trade off progress vs station quality score
 
+const log = {
+  log: (...args: unknown[]) => {
+    if (import.meta.env.DEV) console.log(...args);
+  },
+  warn: (...args: unknown[]) => {
+    if (import.meta.env.DEV) console.warn(...args);
+  },
+  error: (...args: unknown[]) => {
+    if (import.meta.env.DEV) console.error(...args);
+  }
+};
+
+
 export interface ChargingStop {
   stop: number;
   station: ScoredStation;
@@ -170,8 +183,8 @@ function forwardBatterySimulation(
     (s) => s.routeProgressKm <= initialSafeRange,
   ).length;
 
-  console.log(`[ChargeSim] START: energy=${currentEnergy.toFixed(1)}kWh, safeRange=${initialSafeRange.toFixed(1)}km, routeDist=${routeDistanceKm.toFixed(1)}km, stationsOnRoute=${stationsOnRoute.length}`);
-  console.log(`[ChargeSim] Station positions: ${stationsOnRoute.map(s => `${s.station.name}@${s.routeProgressKm.toFixed(0)}km`).join(', ')}`);
+  log.log(`[ChargeSim] START: energy=${currentEnergy.toFixed(1)}kWh, safeRange=${initialSafeRange.toFixed(1)}km, routeDist=${routeDistanceKm.toFixed(1)}km, stationsOnRoute=${stationsOnRoute.length}`);
+  log.log(`[ChargeSim] Station positions: ${stationsOnRoute.map(s => `${s.station.name}@${s.routeProgressKm.toFixed(0)}km`).join(', ')}`);
 
   // ─── STRICT FORWARD SIMULATION ───
   // MAX_ITERATIONS scaled to route length: at minimum ~200km per charge cycle
@@ -191,11 +204,11 @@ function forwardBatterySimulation(
     const finalPhysicalDist = remainingKm + prevDetour;
     const energyToDestination = finalPhysicalDist / efficiency;
 
-    console.log(`[ChargeSim] Step ${iteration}: pos=${currentPositionKm.toFixed(1)}km, remaining=${remainingKm.toFixed(1)}km, energy=${currentEnergy.toFixed(1)}kWh, safeRange=${safeRange.toFixed(1)}km`);
+    log.log(`[ChargeSim] Step ${iteration}: pos=${currentPositionKm.toFixed(1)}km, remaining=${remainingKm.toFixed(1)}km, energy=${currentEnergy.toFixed(1)}kWh, safeRange=${safeRange.toFixed(1)}km`);
 
     // Can we reach the destination safely with current energy (leaving 10% battery)?
     if (currentEnergy - energyToDestination >= minEnergy) {
-      console.log(`[ChargeSim] ✅ Can reach destination safely! energy=${currentEnergy.toFixed(1)}kWh >= needed=${(energyToDestination + minEnergy).toFixed(1)}kWh (including 10% reserve and detour return)`);
+      log.log(`[ChargeSim] ✅ Can reach destination safely! energy=${currentEnergy.toFixed(1)}kWh >= needed=${(energyToDestination + minEnergy).toFixed(1)}kWh (including 10% reserve and detour return)`);
       break;
     }
 
@@ -225,17 +238,17 @@ function forwardBatterySimulation(
 
       if (boostedCandidates.length > 0) {
         if (lastBoostedPositionKm === currentPositionKm) {
-          console.warn(`[ChargeSim] ❌ Already boosted to 100% at pos=${currentPositionKm.toFixed(1)}km, but candidates still empty/rejected.`);
+          log.warn(`[ChargeSim] ❌ Already boosted to 100% at pos=${currentPositionKm.toFixed(1)}km, but candidates still empty/rejected.`);
           return { kind: stops.length === 0 ? "no_station" : "route_gap", stops, firstReachableCount };
         }
         // We can reach stations by charging to 100% — boost current energy
-        console.log(`[ChargeSim] ⚡ No stations at 80% range (${safeRange.toFixed(0)}km), boosting to 100% (${boostedRange.toFixed(0)}km) — found ${boostedCandidates.length} candidates`);
+        log.log(`[ChargeSim] ⚡ No stations at 80% range (${safeRange.toFixed(0)}km), boosting to 100% (${boostedRange.toFixed(0)}km) — found ${boostedCandidates.length} candidates`);
         currentEnergy = maxEnergy;
         lastBoostedPositionKm = currentPositionKm;
         continue; // re-run this iteration with boosted energy
       }
 
-      console.warn(`[ChargeSim] ❌ No safely reachable stations from pos=${currentPositionKm.toFixed(1)}km even at 100% charge (${boostedRange.toFixed(1)}km)`);
+      log.warn(`[ChargeSim] ❌ No safely reachable stations from pos=${currentPositionKm.toFixed(1)}km even at 100% charge (${boostedRange.toFixed(1)}km)`);
       return { kind: stops.length === 0 ? "no_station" : "route_gap", stops, firstReachableCount };
     }
 
@@ -258,7 +271,7 @@ function forwardBatterySimulation(
       });
       const pool = safeCandidates.length > 0 ? safeCandidates : candidates;
       pool.sort((a, b) => {
-        if (Math.abs(a.station.pricePerKWh - b.station.pricePerKWh) > 1) {
+        if (Math.abs(a.station.pricePerKWh - b.station.pricePerKWh) > 0.01) {
           return a.station.pricePerKWh - b.station.pricePerKWh;
         }
         const aDist = a.routeProgressKm - currentPositionKm;
@@ -316,7 +329,7 @@ function forwardBatterySimulation(
     const maxSingleHop = (batteryCapacity - minEnergy) * efficiency; // theoretical max safe range
     const totalLegDist = distToStation + chosen.distFromRouteKm + prevDetour;
     if (totalLegDist > maxSingleHop * 1.25) {
-      console.warn(`[ChargeSim] ⚠️ SKIP ${chosen.station.name}: leg=${totalLegDist.toFixed(0)}km exceeds max possible safe range=${maxSingleHop.toFixed(0)}km — likely projection error`);
+      log.warn(`[ChargeSim] ⚠️ SKIP ${chosen.station.name}: leg=${totalLegDist.toFixed(0)}km exceeds max possible safe range=${maxSingleHop.toFixed(0)}km — likely projection error`);
       usedIds.add(chosen.station.id);
       continue;
     }
@@ -339,7 +352,7 @@ function forwardBatterySimulation(
       const energyNeededForNext = (distToNext / efficiency) + minEnergy;
       if (energyNeededForNext > defaultTargetEnergy) {
         targetEnergy = Math.min(batteryCapacity, energyNeededForNext * 1.05); // 5% buffer
-        console.log(`[ChargeSim] 🔋 Boosting charge target to ${(targetEnergy / batteryCapacity * 100).toFixed(0)}% to reach ${nearest.station.name} (${distToNext.toFixed(0)}km away)`);
+        log.log(`[ChargeSim] 🔋 Boosting charge target to ${(targetEnergy / batteryCapacity * 100).toFixed(0)}% to reach ${nearest.station.name} (${distToNext.toFixed(0)}km away)`);
       }
     } else {
       // No more stations ahead — charge enough to reach destination
@@ -347,7 +360,7 @@ function forwardBatterySimulation(
       const energyNeededForEnd = (distToEnd / efficiency) + minEnergy;
       if (energyNeededForEnd > defaultTargetEnergy) {
         targetEnergy = Math.min(batteryCapacity, energyNeededForEnd * 1.05);
-        console.log(`[ChargeSim] 🔋 Boosting charge target to ${(targetEnergy / batteryCapacity * 100).toFixed(0)}% to reach destination (${distToEnd.toFixed(0)}km away)`);
+        log.log(`[ChargeSim] 🔋 Boosting charge target to ${(targetEnergy / batteryCapacity * 100).toFixed(0)}% to reach destination (${distToEnd.toFixed(0)}km away)`);
       }
     }
     const energyToCharge = Math.max(0, targetEnergy - energyOnArrival);
@@ -355,7 +368,7 @@ function forwardBatterySimulation(
     // If no charging needed (already above target), still move forward
     // but do NOT count as a charging stop
     if (energyToCharge <= 0.5) {
-      console.log(`[ChargeSim] ⏭️ Pass-through ${chosen.station.name} — already at ${(energyOnArrival / batteryCapacity * 100).toFixed(0)}% (no charge needed)`);
+      log.log(`[ChargeSim] ⏭️ Pass-through ${chosen.station.name} — already at ${(energyOnArrival / batteryCapacity * 100).toFixed(0)}% (no charge needed)`);
       usedIds.add(chosen.station.id);
       currentEnergy = energyOnArrival;
       currentPositionKm = chosen.routeProgressKm;
@@ -377,7 +390,7 @@ function forwardBatterySimulation(
     const stopIndex = stops.length + 1;
 
     // ─── DEBUG LOG ───
-    console.log(`[ChargeSim] 🔋 CHARGE STOP #${stopIndex}: ${chosen.station.name} (${chosen.station.city})
+    log.log(`[ChargeSim] 🔋 CHARGE STOP #${stopIndex}: ${chosen.station.name} (${chosen.station.city})
   currentPosition=${currentPositionKm.toFixed(1)}km → stationAt=${chosen.routeProgressKm.toFixed(1)}km (drove ${distToStation.toFixed(1)}km)
   energyBefore=${currentEnergy.toFixed(1)}kWh → energyOnArrival=${energyOnArrival.toFixed(1)}kWh → energyAfter=${energyAfterCharge.toFixed(1)}kWh (+${energyToCharge.toFixed(1)}kWh)
   batteryOnArrival=${batteryOnArrival.toFixed(1)}% → batteryAfterCharge=${batteryAfterCharge}%
@@ -409,13 +422,13 @@ function forwardBatterySimulation(
 
     // Sanity check: position must have advanced
     if (distToStation < 1) {
-      console.error(`[ChargeSim] BUG: station distance < 1km, breaking to avoid infinite loop`);
+      log.error(`[ChargeSim] BUG: station distance < 1km, breaking to avoid infinite loop`);
       break;
     }
   }
 
   if (iteration >= MAX_ITERATIONS) {
-    console.warn(`[ChargeSim] ⚠️ Hit MAX_ITERATIONS (${MAX_ITERATIONS}), may be incomplete`);
+    log.warn(`[ChargeSim] ⚠️ Hit MAX_ITERATIONS (${MAX_ITERATIONS}), may be incomplete`);
   }
 
   // ─── FINAL VALIDATION ───
@@ -424,11 +437,11 @@ function forwardBatterySimulation(
   const finalPhysicalDist = finalRemaining + prevDetour;
   const finalEnergyNeeded = finalPhysicalDist / efficiency;
   if (finalRemaining > 1 && (currentEnergy - finalEnergyNeeded) < minEnergy) {
-    console.warn(`[ChargeSim] ⚠️ FINAL VALIDATION FAILED: energy=${currentEnergy.toFixed(1)}kWh < needed=${(finalEnergyNeeded + minEnergy).toFixed(1)}kWh for ${finalRemaining.toFixed(1)}km (including detour return)`);
+    log.warn(`[ChargeSim] ⚠️ FINAL VALIDATION FAILED: energy=${currentEnergy.toFixed(1)}kWh < needed=${(finalEnergyNeeded + minEnergy).toFixed(1)}kWh for ${finalRemaining.toFixed(1)}km (including detour return)`);
     return { kind: "route_gap", stops, firstReachableCount };
   }
 
-  console.log(`[ChargeSim] ✅ COMPLETE: ${stops.length} charging stops, final energy=${currentEnergy.toFixed(1)}kWh, needed=${(finalEnergyNeeded + minEnergy).toFixed(1)}kWh`);
+  log.log(`[ChargeSim] ✅ COMPLETE: ${stops.length} charging stops, final energy=${currentEnergy.toFixed(1)}kWh, needed=${(finalEnergyNeeded + minEnergy).toFixed(1)}kWh`);
 
   return { kind: "ok", stops, firstReachableCount };
 }
@@ -463,8 +476,8 @@ export function getStationTags(s: ScoredStation, allStations: ScoredStation[]): 
   const best = allStations.reduce((a, b) => (a.score < b.score ? a : b));
   if (s.id === best.id) tags.push("Best Overall");
   const fastest = allStations.reduce((a, b) => {
-    const aEta = a.current_wait_time + (a.power > 0 ? (40 / a.power) * 60 : 120);
-    const bEta = b.current_wait_time + (b.power > 0 ? (40 / b.power) * 60 : 120);
+    const aEta = a.current_wait_time + (a.power > 0 ? (30 / a.power) * 60 : 120);
+    const bEta = b.current_wait_time + (b.power > 0 ? (30 / b.power) * 60 : 120);
     return aEta < bEta ? a : b;
   });
   if (s.id === fastest.id) tags.push("Fastest");
@@ -501,15 +514,13 @@ export function useTripPlanner(
         cumulDists[i - 1] + haversine(routeCoords[i - 1][0], routeCoords[i - 1][1], routeCoords[i][0], routeCoords[i][1]),
       );
     }
-    const consistentDistance = cumulDists[cumulDists.length - 1];
-
     const minEnergy = (MIN_BATTERY_PERCENT / 100) * vehicle.battery_capacity;
     const safeStartEnergy = Math.max(0, ((batteryLevel - MIN_BATTERY_PERCENT) / 100) * vehicle.battery_capacity);
     const safeStartRangeKm = safeStartEnergy * vehicle.efficiency;
 
     // No charging needed (leaving 10% reserve battery at destination)
     if (safeStartRangeKm >= routeDistanceKm) {
-      console.log("[ChargeSim] No charging needed — battery covers route with 10% reserve");
+      log.log("[ChargeSim] No charging needed — battery covers route with 10% reserve");
       return {
         stops: [],
         totalDriveTimeMin: driveDurationMin,
@@ -571,7 +582,7 @@ export function useTripPlanner(
     const detourDriveTimeMin = Math.round(totalDetourKm * (60 / DETOUR_SPEED_KMH));
     const totalDriveTime = driveDurationMin + detourDriveTimeMin;
 
-    console.log("[ChargeSim] 💰 Trip Summary:", {
+    log.log("[ChargeSim] 💰 Trip Summary:", {
       actualChargeStops: result.stops.length,
       totalCost: `₹${totalCost}`,
       detourKm: totalDetourKm,

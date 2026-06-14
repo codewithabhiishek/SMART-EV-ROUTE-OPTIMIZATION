@@ -434,6 +434,7 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
     current_position = 0.0
     stops = []
     used_ids = set()
+    last_boosted_position = None
     
     min_energy = (10 / 100.0) * battery_capacity
     max_possible_stops = int(math.ceil(route_dist / (battery_capacity * 0.5 * efficiency))) + 5
@@ -482,17 +483,52 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
                 candidates.append((s, total_leg_dist, dist_to_station))
                 
         if not candidates:
-            return {
-                "stops_count": len(stops),
-                "drive_time": route_duration,
-                "wait_time": sum(st["station"]["current_wait_time"] for st in stops),
-                "charge_time": sum(st["charging_time"] for st in stops),
-                "trip_time": route_duration,
-                "charging_cost": sum(st["charging_cost"] for st in stops),
-                "distance": route_dist,
-                "success": False,
-                "status": "no_station" if not stops else "route_gap"
-            }
+            # ─── BOOST CHARGE: try charging to 100% to bridge the gap ───
+            max_energy = battery_capacity  # 100%
+            boosted_range = max(0.0, max_energy - min_energy) * efficiency
+            boosted_candidates = []
+            for s in stations_on_route:
+                s_obj = s["station"]
+                if s_obj["id"] in used_ids:
+                    continue
+                if s["routeProgressKm"] <= current_position + 1.0:
+                    continue
+                dist_to_s = s["routeProgressKm"] - current_position
+                total_leg = dist_to_s + s["distFromRouteKm"] + prev_detour
+                if total_leg <= boosted_range:
+                    boosted_candidates.append(s)
+
+            if boosted_candidates:
+                if last_boosted_position == current_position:
+                    # Already boosted at this position — avoid infinite loop
+                    return {
+                        "stops_count": len(stops),
+                        "drive_time": route_duration,
+                        "wait_time": sum(st["station"]["current_wait_time"] for st in stops),
+                        "charge_time": sum(st["charging_time"] for st in stops),
+                        "trip_time": route_duration,
+                        "charging_cost": sum(st["charging_cost"] for st in stops),
+                        "distance": route_dist,
+                        "success": False,
+                        "status": "no_station" if not stops else "route_gap"
+                    }
+                # Boost current energy to 100% and re-run this iteration
+                current_energy = max_energy
+                last_boosted_position = current_position
+                continue
+            else:
+                # No stations reachable even at 100% charge
+                return {
+                    "stops_count": len(stops),
+                    "drive_time": route_duration,
+                    "wait_time": sum(st["station"]["current_wait_time"] for st in stops),
+                    "charge_time": sum(st["charging_time"] for st in stops),
+                    "trip_time": route_duration,
+                    "charging_cost": sum(st["charging_cost"] for st in stops),
+                    "distance": route_dist,
+                    "success": False,
+                    "status": "no_station" if not stops else "route_gap"
+                }
             
         # Select candidate according to policy
         chosen_tuple = None
@@ -615,8 +651,31 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
         energy_used = total_leg_dist / efficiency
         energy_on_arrival = max(0.0, current_energy - energy_used)
         
-        # Always recharge to 80%
-        target_energy = battery_capacity * 0.80
+        # ─── SMART CHARGE TARGET: 80% normally, up to 100% if next station is far ───
+        default_target_energy = battery_capacity * 0.80
+        # Look ahead: find the nearest UNUSED station after this one
+        next_stations = [
+            s for s in stations_on_route
+            if s["station"]["id"] not in used_ids
+            and s["station"]["id"] != chosen["station"]["id"]
+            and s["routeProgressKm"] > chosen["routeProgressKm"] + 1.0
+        ]
+        target_energy = default_target_energy
+        if next_stations:
+            nearest = min(next_stations, key=lambda s: s["routeProgressKm"])
+            dist_to_next = (
+                nearest["routeProgressKm"] - chosen["routeProgressKm"]
+                + chosen["distFromRouteKm"] * 2 + nearest["distFromRouteKm"]
+            )
+            energy_needed_for_next = (dist_to_next / efficiency) + min_energy
+            if energy_needed_for_next > default_target_energy:
+                target_energy = min(battery_capacity, energy_needed_for_next * 1.05)  # 5% buffer
+        else:
+            # No more stations ahead — charge enough to reach destination
+            dist_to_end = route_dist - chosen["routeProgressKm"] + chosen["distFromRouteKm"]
+            energy_needed_for_end = (dist_to_end / efficiency) + min_energy
+            if energy_needed_for_end > default_target_energy:
+                target_energy = min(battery_capacity, energy_needed_for_end * 1.05)
         energy_to_charge = max(0.0, target_energy - energy_on_arrival)
         
         if energy_to_charge <= 0.5:
@@ -643,6 +702,7 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
         used_ids.add(chosen["station"]["id"])
         current_energy = energy_after_charge
         current_position = chosen["routeProgressKm"]
+        last_boosted_position = None
         
         if dist_to_station < 1.0:
             break
@@ -1232,17 +1292,6 @@ def generate_academic_plots(df: pd.DataFrame, sweep_results: list):
     plt.tight_layout()
     plt.savefig(PLOTS_DIR / "weight_sensitivity_chart.png")
     plt.close()
-    
-    # Copy generated plots to the chat artifacts directory
-    artifact_plots_dir = Path("/Users/abhiishek/.gemini/antigravity-ide/brain/d12deedc-0a90-4924-8cbe-60494e904bb4")
-    if artifact_plots_dir.exists():
-        import shutil
-        for file in ["travel_time_boxplot.png", "charging_cost_boxplot.png", "charging_stops_barplot.png", "success_rate_comparison.png", "ablation_study_chart.png", "travel_time_distribution.png", "weight_sensitivity_chart.png"]:
-            src_file = PLOTS_DIR / file
-            dest_file = artifact_plots_dir / file
-            if src_file.exists():
-                shutil.copy(src_file, dest_file)
-        print("📁 Saved a copy of generated plots to chat artifacts folder.", flush=True)
 
     print("✅ Plots generated successfully and saved in plots directory.", flush=True)
 

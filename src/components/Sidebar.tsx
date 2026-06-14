@@ -11,9 +11,6 @@ import {
   ChevronRight,
   ChevronUp,
   Clock3,
-  Cpu,
-  Fuel,
-  IndianRupee,
   Info,
   Loader2,
   MapPin,
@@ -22,7 +19,6 @@ import {
   Settings,
   SlidersHorizontal,
   Sparkles,
-  Star,
   X,
   Zap,
 } from "lucide-react";
@@ -475,6 +471,19 @@ export default function Sidebar({
                   <span className="data-label-real">📍 Real Locations</span>
                   <span className="data-label-simulated">⏱ Simulated Wait/Availability</span>
                 </div>
+                
+                {rerouteSuggestions.length > 0 && (
+                  <div className="mb-4 space-y-3">
+                    {rerouteSuggestions.map((suggestion, idx) => (
+                      <RerouteCard
+                        key={idx}
+                        suggestion={suggestion}
+                        onSelect={() => onSelectStation(suggestion.better)}
+                      />
+                    ))}
+                  </div>
+                )}
+                
                 <div className="space-y-3">
                   {stations.map((station, index) => (
                     <StationCard
@@ -834,15 +843,6 @@ function AlertCard({ variant, title, description }: { variant: "destructive" | "
   );
 }
 
-function InsightCard({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className="glass-panel rounded-2xl p-3">
-      <div className="mb-2 flex items-center gap-2 text-muted-foreground">{icon}<span className="text-xs">{label}</span></div>
-      <div className="text-lg font-semibold text-foreground">{value}</div>
-    </div>
-  );
-}
-
 function TimeRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between text-sm">
@@ -985,7 +985,7 @@ function LoadingState({ label }: { label: string }) {
 
 function getTagClasses(tag: string): string {
   switch (tag) {
-    case "Best":
+    case "Best Overall":
       return "rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary";
     case "Cheapest":
       return "rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent";

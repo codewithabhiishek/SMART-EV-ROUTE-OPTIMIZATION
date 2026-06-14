@@ -8,7 +8,6 @@ import { useOCMStations } from "@/hooks/useOCMStations";
 const FIRST_HOP_SAFETY_FACTOR = 0.95;
 const ROUTE_BUFFER_KM = 50;
 const FORWARD_PROGRESS_TOLERANCE_KM = 2;
-const RECHARGE_TARGET_BATTERY = 80;
 
 export interface SimulationConfig {
   trafficLevel: number;
@@ -232,6 +231,18 @@ export function useSimulation() {
   const [batteryLevel, setBatteryLevel] = useState(80);
   const [vehicle, setVehicle] = useState<EVVehicle | null>(null);
   const simInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isTabVisible, setIsTabVisible] = useState(true);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsTabVisible(document.visibilityState === "visible");
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
 
   // Load real OCM stations once fetched
   useEffect(() => {
@@ -241,6 +252,15 @@ export function useSimulation() {
   }, [ocmStations, stationsLoading]);
 
   useEffect(() => {
+    const isIdle = !routeCoords || routeCoords.length === 0 || !isTabVisible;
+    if (isIdle) {
+      if (simInterval.current) {
+        clearInterval(simInterval.current);
+        simInterval.current = null;
+      }
+      return;
+    }
+
     simInterval.current = setInterval(() => {
       setAllStations((prev) => {
         const updated = [...prev];
@@ -302,9 +322,10 @@ export function useSimulation() {
     return () => {
       if (simInterval.current) {
         clearInterval(simInterval.current);
+        simInterval.current = null;
       }
     };
-  }, [simConfig]);
+  }, [simConfig, routeCoords, isTabVisible]);
 
   const allStationsLength = allStations.length;
   const firstStationId = allStations[0]?.id;
@@ -314,7 +335,9 @@ export function useSimulation() {
     const cache = new Map<string, { distanceFromRoute: number; startDistanceKm: number; routeProgressKm: number }>();
     
     if (routeCoords && routeCoords.length > 1) {
-      console.log(`[Sim] Rebuilding spatial cache for ${allStations.length} stations along ${routeCoords.length}-point route...`);
+      if (import.meta.env.DEV) {
+        console.log(`[Sim] Rebuilding spatial cache for ${allStations.length} stations along ${routeCoords.length}-point route...`);
+      }
       const cumulDists = getCumulativeDistances(routeCoords);
       for (const station of allStations) {
         const proj = projectOnRoute(station.lat, station.lng, routeCoords, cumulDists);
@@ -344,7 +367,9 @@ export function useSimulation() {
     const timeModeMultiplier = simConfig.timeMode === "peak" ? 1.4 : simConfig.timeMode === "night" ? 0.6 : 1.0;
     const trafficMultiplier = 1 + (simConfig.trafficLevel - 1) * 0.05;
 
-    console.log(`[Sim] scoring stations: timeMode=${simConfig.timeMode} traffic=${simConfig.trafficLevel} timeMult=${timeModeMultiplier} trafficMult=${trafficMultiplier.toFixed(2)}`);
+    if (import.meta.env.DEV) {
+      console.log(`[Sim] scoring stations: timeMode=${simConfig.timeMode} traffic=${simConfig.trafficLevel} timeMult=${timeModeMultiplier} trafficMult=${trafficMultiplier.toFixed(2)}`);
+    }
 
     const scored: RoutedStation[] = allStations.map((station) => {
       const cached = spatialDistances.get(station.id) || {

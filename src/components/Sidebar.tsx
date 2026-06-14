@@ -157,9 +157,14 @@ export default function Sidebar({
     <aside className="absolute left-0 bottom-0 top-auto md:top-0 z-[1000] flex h-[50vh] md:h-full w-full md:w-[420px] flex-col border-t md:border-t-0 border-r-0 md:border-r border-border/40 rounded-t-2xl md:rounded-t-none md:rounded-r-2xl glass-panel animate-slide-in-left shadow-2xl">
       <div className="border-b border-border/40 p-4 pb-3">
         <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-foreground">ChargeIQ</h1>
-            <p className="text-xs text-muted-foreground">Cleaner EV routing with transparent stop planning</p>
+          <div className="flex items-start gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20 mt-0.5">
+              <Zap className="h-5 w-5 fill-primary/10" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-foreground">ChargeIQ</h1>
+              <p className="text-xs text-muted-foreground">Cleaner EV routing with transparent stop planning</p>
+            </div>
           </div>
           <button
             onClick={() => setCollapsed(true)}

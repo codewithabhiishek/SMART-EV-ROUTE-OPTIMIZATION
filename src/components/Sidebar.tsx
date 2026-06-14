@@ -771,7 +771,7 @@ function StationCard({
   station: ScoredStation; allStations: ScoredStation[]; vehicle: EVVehicle | null; batteryLevel: number;
   onClick: () => void; isSelected: boolean; rankIndex: number; emphasized?: boolean;
 }) {
-  const tags = getStationTags(station, allStations);
+  const tags = getStationTags(station, allStations, vehicle);
   const costEstimate = estimateStationChargeCostSmart(vehicle, batteryLevel, station);
   const costDisplay = costEstimate.noChargeNeeded ? "No charge needed" : `₹${costEstimate.cost}`;
 
@@ -892,7 +892,7 @@ function StationDetail({
   const breakdown = getScoreBreakdown(station);
   const costEstimate = estimateStationChargeCostSmart(vehicle, batteryLevel, station);
   const costDisplay = costEstimate.noChargeNeeded ? "No charge needed" : `₹${costEstimate.cost}`;
-  const tags = getStationTags(station, allStations);
+  const tags = getStationTags(station, allStations, vehicle);
 
   return (
     <section className="border-t border-border/40 bg-card/90 p-4 backdrop-blur-xl animate-slide-up">

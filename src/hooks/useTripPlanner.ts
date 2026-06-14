@@ -150,15 +150,10 @@ function forwardBatterySimulation(
   const stops: ChargingStop[] = [];
   const usedIds = new Set<string>();
 
-  // ─── CRITICAL FIX: Normalize station positions ───
-  // cumulDists is haversine-based (straight-line between polyline points),
-  // routeDistanceKm is actual road distance from OSRM.
-  // These diverge significantly on long routes. We must scale station positions
-  // so they're proportional to the real road distance.
-  const totalHaversineDist = cumulDists[cumulDists.length - 1];
-  const scaleFactor = totalHaversineDist > 0 ? routeDistanceKm / totalHaversineDist : 1;
+  // ─── CRITICAL: Distortions removed ───
+  // We use cumulative haversine distance for progress/boundaries, which prevents position distortion.
 
-  // Project all stations onto route and scale to road distance
+  // Project all stations onto route
   const stationsOnRoute: StationOnRoute[] = stations
     .map((s) => {
       let proj = projectionCache?.get(s.id);
@@ -168,12 +163,12 @@ function forwardBatterySimulation(
       }
       return {
         station: s,
-        routeProgressKm: proj.progressKm * scaleFactor,
+        routeProgressKm: proj.progressKm,
         distFromRouteKm: proj.distFromRouteKm,
       };
     })
     .filter((s) => s.distFromRouteKm <= ROUTE_CORRIDOR_KM)
-    .filter((s) => s.routeProgressKm >= 0 && s.routeProgressKm <= routeDistanceKm)// must be between start and end
+    .filter((s) => s.routeProgressKm >= 0 && s.routeProgressKm <= routeDistanceKm) // must be between start and end
     .sort((a, b) => a.routeProgressKm - b.routeProgressKm);
 
   const minEnergy = (MIN_BATTERY_PERCENT / 100) * batteryCapacity;
@@ -288,11 +283,21 @@ function forwardBatterySimulation(
       });
       const pool = safeCandidates.length > 0 ? safeCandidates : candidates;
       pool.sort((a, b) => {
-        const aTime = a.station.current_wait_time + (a.station.power > 0 ? (30 / a.station.power) * 60 : 120);
-        const bTime = b.station.current_wait_time + (b.station.power > 0 ? (30 / b.station.power) * 60 : 120);
-        if (Math.abs(aTime - bTime) > 5) return aTime - bTime;
         const aDist = a.routeProgressKm - currentPositionKm;
+        const aLegDist = aDist + a.distFromRouteKm + prevDetour;
+        const aEnergyOnArrival = Math.max(0, currentEnergy - aLegDist / efficiency);
+        const aEnergyToCharge = Math.max(0, batteryCapacity * 0.8 - aEnergyOnArrival);
+        const aMaxPower = Math.min(a.station.power, vehicle.max_charging_power || 50);
+        const aTime = a.station.current_wait_time + (aMaxPower > 0 ? (aEnergyToCharge / aMaxPower) * 60 : 120);
+
         const bDist = b.routeProgressKm - currentPositionKm;
+        const bLegDist = bDist + b.distFromRouteKm + prevDetour;
+        const bEnergyOnArrival = Math.max(0, currentEnergy - bLegDist / efficiency);
+        const bEnergyToCharge = Math.max(0, batteryCapacity * 0.8 - bEnergyOnArrival);
+        const bMaxPower = Math.min(b.station.power, vehicle.max_charging_power || 50);
+        const bTime = b.station.current_wait_time + (bMaxPower > 0 ? (bEnergyToCharge / bMaxPower) * 60 : 120);
+
+        if (Math.abs(aTime - bTime) > 5) return aTime - bTime;
         return bDist - aDist;
       });
       chosen = pool[0];
@@ -385,7 +390,6 @@ function forwardBatterySimulation(
     
     const energyAfterCharge = energyOnArrival + energyToCharge;
     const batteryAfterCharge = Math.round((energyAfterCharge / batteryCapacity) * 100);
-    const rangeAfterCharge = energyAfterCharge * efficiency;
 
     const stopIndex = stops.length + 1;
 
@@ -394,7 +398,7 @@ function forwardBatterySimulation(
   currentPosition=${currentPositionKm.toFixed(1)}km → stationAt=${chosen.routeProgressKm.toFixed(1)}km (drove ${distToStation.toFixed(1)}km)
   energyBefore=${currentEnergy.toFixed(1)}kWh → energyOnArrival=${energyOnArrival.toFixed(1)}kWh → energyAfter=${energyAfterCharge.toFixed(1)}kWh (+${energyToCharge.toFixed(1)}kWh)
   batteryOnArrival=${batteryOnArrival.toFixed(1)}% → batteryAfterCharge=${batteryAfterCharge}%
-  rangeAfterCharge=${rangeAfterCharge.toFixed(1)}km, remainingToDestination=${(routeDistanceKm - chosen.routeProgressKm).toFixed(1)}km
+  rangeAfterCharge=${(energyAfterCharge * efficiency).toFixed(1)}km, remainingToDestination=${(routeDistanceKm - chosen.routeProgressKm).toFixed(1)}km
   cost=₹${cost}, chargingTime=${chargingTimeMin}min`);
 
     const stop: ChargingStop = {
@@ -468,7 +472,7 @@ export function getScoreBreakdown(s: ScoredStation): ScoreBreakdown {
   };
 }
 
-export function getStationTags(s: ScoredStation, allStations: ScoredStation[]): string[] {
+export function getStationTags(s: ScoredStation, allStations: ScoredStation[], vehicle?: EVVehicle | null): string[] {
   if (allStations.length === 0) return [];
   const tags: string[] = [];
   const cheapest = allStations.reduce((a, b) => (a.pricePerKWh < b.pricePerKWh ? a : b));
@@ -476,8 +480,29 @@ export function getStationTags(s: ScoredStation, allStations: ScoredStation[]): 
   const best = allStations.reduce((a, b) => (a.score < b.score ? a : b));
   if (s.id === best.id) tags.push("Best Overall");
   const fastest = allStations.reduce((a, b) => {
-    const aEta = a.current_wait_time + (a.power > 0 ? (30 / a.power) * 60 : 120);
-    const bEta = b.current_wait_time + (b.power > 0 ? (30 / b.power) * 60 : 120);
+    let aEta: number;
+    let bEta: number;
+
+    if (vehicle) {
+      const minEnergy = 0.1 * vehicle.battery_capacity;
+      const efficiency = vehicle.efficiency;
+
+      // Estimate total leg distance to station
+      const aLegDist = (a.distance_from_route ?? 0) * 2 + a.start_distance_km;
+      const aArrivalEnergy = Math.max(0, vehicle.battery_capacity * 0.8 - aLegDist / efficiency);
+      const aEnergyToCharge = Math.max(0, vehicle.battery_capacity * 0.8 - aArrivalEnergy);
+      const aMaxPower = Math.min(a.power, vehicle.max_charging_power || 50);
+      aEta = a.current_wait_time + (aMaxPower > 0 ? (aEnergyToCharge / aMaxPower) * 60 : 120);
+
+      const bLegDist = (b.distance_from_route ?? 0) * 2 + b.start_distance_km;
+      const bArrivalEnergy = Math.max(0, vehicle.battery_capacity * 0.8 - bLegDist / efficiency);
+      const bEnergyToCharge = Math.max(0, vehicle.battery_capacity * 0.8 - bArrivalEnergy);
+      const bMaxPower = Math.min(b.power, vehicle.max_charging_power || 50);
+      bEta = b.current_wait_time + (bMaxPower > 0 ? (bEnergyToCharge / bMaxPower) * 60 : 120);
+    } else {
+      aEta = a.current_wait_time + (a.power > 0 ? (30 / a.power) * 60 : 120);
+      bEta = b.current_wait_time + (b.power > 0 ? (30 / b.power) * 60 : 120);
+    }
     return aEta < bEta ? a : b;
   });
   if (s.id === fastest.id) tags.push("Fastest");
@@ -514,6 +539,7 @@ export function useTripPlanner(
         cumulDists[i - 1] + haversine(routeCoords[i - 1][0], routeCoords[i - 1][1], routeCoords[i][0], routeCoords[i][1]),
       );
     }
+    const totalHaversineDist = cumulDists[cumulDists.length - 1];
     const minEnergy = (MIN_BATTERY_PERCENT / 100) * vehicle.battery_capacity;
     const safeStartEnergy = Math.max(0, ((batteryLevel - MIN_BATTERY_PERCENT) / 100) * vehicle.battery_capacity);
     const safeStartRangeKm = safeStartEnergy * vehicle.efficiency;
@@ -538,7 +564,7 @@ export function useTripPlanner(
       vehicle,
       batteryLevel,
       routeCoords,
-      routeDistanceKm,
+      totalHaversineDist,
       stations,
       cumulDists,
       "smart",
@@ -596,7 +622,7 @@ export function useTripPlanner(
         vehicle,
         batteryLevel,
         routeCoords,
-        routeDistanceKm,
+        totalHaversineDist,
         stations,
         cumulDists,
         pol,

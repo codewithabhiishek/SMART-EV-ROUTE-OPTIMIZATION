@@ -328,14 +328,13 @@ def sample_mmc_wait_time(total_chargers: int, avg_charge_duration_min: float, tr
 def project_stations_to_corridor(stations: list, route_coords: list, cumul_dists: list, route_dist_km: float) -> list:
     """Projects stations onto a corridor once to avoid redundant O(N) polyline searches."""
     total_haversine = cumul_dists[-1]
-    scale_factor = route_dist_km / total_haversine if total_haversine > 0 else 1.0
     
     projected = []
     for s in stations:
         progress, dist_from_route = project_on_route(s["lat"], s["lng"], route_coords, cumul_dists)
-        progress_km = progress * scale_factor
+        progress_km = progress
         
-        if dist_from_route > 50.0 or progress_km < 0 or progress_km > route_dist_km:
+        if dist_from_route > 50.0 or progress_km < 0 or progress_km > total_haversine:
             continue
             
         projected.append({
@@ -556,12 +555,19 @@ def run_forward_simulation(vehicle: dict, battery_level: float, route_dist: floa
             
             def fastest_key(item):
                 s_obj = item[0]["station"]
-                dist = item[2]
+                total_leg_dist = item[1]
                 power = s_obj["power"]
                 wait = s_obj["current_wait_time"]
-                eta = wait + (30.0 / power * 60.0 if power > 0 else 120.0)
+                
+                energy_on_arrival = max(0.0, current_energy - total_leg_dist / efficiency)
+                energy_to_charge = max(0.0, battery_capacity * 0.8 - energy_on_arrival)
+                max_vehicle_power = vehicle.get("max_charging_power", 50.0)
+                charging_power = min(power, max_vehicle_power)
+                
+                charge_time = (energy_to_charge / charging_power) * 60.0 if charging_power > 0 else 120.0
+                eta = wait + charge_time
                 eta_bucket = round(eta / 5.0) * 5.0
-                return (eta_bucket, -dist)
+                return (eta_bucket, -item[2])
             pool.sort(key=fastest_key)
             chosen_tuple = pool[0]
             
@@ -782,7 +788,8 @@ def run_weight_sensitivity_sweep(df_normal: pd.DataFrame, raw_stations: list, ro
         corridor_cache[corridor] = {
             "projected_stations": projected,
             "route_dist_km": route_dist_km,
-            "route_duration_min": route_duration_min
+            "route_duration_min": route_duration_min,
+            "total_haversine_km": cumul_dists[-1]
         }
     
     for w_wait in wait_weights:
@@ -858,7 +865,7 @@ def run_weight_sensitivity_sweep(df_normal: pd.DataFrame, raw_stations: list, ro
             stations_on_route.sort(key=lambda x: x["routeProgressKm"])
             
             sim = run_forward_simulation(
-                vehicle, start_soc, route_dist_km, route_duration_min, stations_on_route, "smart"
+                vehicle, start_soc, c_info["total_haversine_km"], route_duration_min, stations_on_route, "smart"
             )
             if sim["success"]:
                 total_times.append(sim["trip_time"] / 60.0)
@@ -934,7 +941,7 @@ def run_experiments():
             projected_stations = project_stations_to_corridor(
                 raw_stations, route_coords, cumul_dists, route_dist_km
             )
-            
+            total_haversine_km = cumul_dists[-1]
             for t in range(trials_per_corr):
                 trial_counter += 1
                 if trial_counter % 250 == 0:
@@ -969,7 +976,7 @@ def run_experiments():
                 
                 for pol in policies:
                     sim = run_forward_simulation(
-                        vehicle, start_soc, route_dist_km, route_duration_min, stations_on_route, pol
+                        vehicle, start_soc, total_haversine_km, route_duration_min, stations_on_route, pol
                     )
                     
                     trial_results[f"{pol}_success"] = 1 if sim["success"] else 0

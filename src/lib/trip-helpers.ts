@@ -10,15 +10,6 @@ export function formatMinutes(totalMinutes: number): string {
   return `${hours}h ${minutes}m`;
 }
 
-export function estimateEnergyNeeded(
-  vehicle: EVVehicle | null,
-  currentBatteryLevel: number,
-  targetCharge = 80,
-): number {
-  if (!vehicle) return 0;
-  const delta = Math.max(0, targetCharge - currentBatteryLevel);
-  return (delta / 100) * vehicle.battery_capacity;
-}
 
 /**
  * Estimate cost to charge at a station based on route-aware logic.

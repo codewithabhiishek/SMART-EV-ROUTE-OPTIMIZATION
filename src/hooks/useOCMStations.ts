@@ -4,6 +4,10 @@ import type { ChargingStation } from "@/data/stations";
 const OCM_API_KEY = import.meta.env.VITE_OCM_API_KEY || "";
 const OCM_BASE_URL = "https://api.openchargemap.io/v3/poi";
 
+const ROUTE_SAMPLE_POINTS = 8;
+const SAMPLE_RADIUS_KM = 80;
+const PER_SAMPLE_MAX = 100;
+const CACHE_EXPIRATION_MS = 5 * 60 * 1000; // 5 minutes cache expiry
 
 interface OCMConnection {
   PowerKW?: number;
@@ -86,8 +90,67 @@ export interface OCMFetchState {
   source: "ocm" | "fallback";
 }
 
+function sampleRoutePoints(coords: [number, number][], n: number): [number, number][] {
+  if (coords.length <= n) return coords;
+  const points: [number, number][] = [];
+  const step = (coords.length - 1) / (n - 1);
+  for (let i = 0; i < n; i++) {
+    const idx = Math.min(Math.round(i * step), coords.length - 1);
+    points.push(coords[idx]);
+  }
+  return points;
+}
+
+async function fetchStationsAroundPoint(
+  lat: number,
+  lng: number,
+  radiusKm: number,
+  maxResults: number,
+): Promise<OCMStation[]> {
+  const params = new URLSearchParams({
+    output: "json",
+    latitude: lat.toString(),
+    longitude: lng.toString(),
+    distance: radiusKm.toString(),
+    distanceunit: "KM",
+    maxresults: maxResults.toString(),
+    statustypeid: "50",
+    compact: "true",
+    verbose: "false",
+    key: OCM_API_KEY,
+  });
+
+  const response = await fetch(`${OCM_BASE_URL}?${params.toString()}`);
+  if (!response.ok) throw new Error(`OCM API error: ${response.status}`);
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
+}
+
+async function fetchStationsAlongRoute(routeCoords: [number, number][]): Promise<OCMStation[]> {
+  const samplePoints = sampleRoutePoints(routeCoords, ROUTE_SAMPLE_POINTS);
+  
+  const results = await Promise.all(
+    samplePoints.map((point) =>
+      fetchStationsAroundPoint(point[0], point[1], SAMPLE_RADIUS_KM, PER_SAMPLE_MAX).catch(() => [] as OCMStation[])
+    )
+  );
+
+  const seen = new Set<number>();
+  const all: OCMStation[] = [];
+  for (const batch of results) {
+    for (const station of batch) {
+      if (!seen.has(station.ID)) {
+        seen.add(station.ID);
+        all.push(station);
+      }
+    }
+  }
+  return all;
+}
+
 let globalIndiaStations: ChargingStation[] | null = null;
 let globalFetchPromise: Promise<ChargingStation[]> | null = null;
+let lastFetchTime = 0;
 
 async function fetchGenericIndiaStations(): Promise<OCMStation[]> {
   const params = new URLSearchParams({
@@ -121,11 +184,9 @@ async function fetchAndMapIndiaStations(): Promise<ChargingStation[]> {
     )
     .map(mapOCMToStation);
 
-  // Always merge built-in highway corridor stations to fill OCM coverage gaps
   const { generateStations } = await import("@/data/stations");
   const builtIn = generateStations();
 
-  // Deduplicate: skip built-in stations that are within 0.5 km of an OCM station
   const merged = [...ocmMapped];
   for (const station of builtIn) {
     const tooClose = ocmMapped.some((ocm) => {
@@ -143,7 +204,6 @@ async function fetchAndMapIndiaStations(): Promise<ChargingStation[]> {
 }
 
 export function useOCMStations(routeCoords: [number, number][] | null): OCMFetchState {
-  // We keep routeCoords in signature for backward compatibility, but we no longer refetch on route change
   const [state, setState] = useState<OCMFetchState>({
     stations: [],
     loading: true,
@@ -157,24 +217,53 @@ export function useOCMStations(routeCoords: [number, number][] | null): OCMFetch
     setState((prev) => ({ ...prev, loading: true }));
 
     try {
-      if (!globalIndiaStations) {
-        if (!globalFetchPromise) {
-          console.log("[OCM] Starting initial India stations fetch...");
-          globalFetchPromise = fetchAndMapIndiaStations();
+      if (routeCoords && routeCoords.length > 0) {
+        console.log(`[OCM] Fetching stations along route (${routeCoords.length} points)...`);
+        const raw = await fetchStationsAlongRoute(routeCoords);
+        if (id !== fetchIdRef.current) return;
+        const mapped = raw.map(mapOCMToStation);
+        
+        // Merge with built-in corridor stations to fill OCM coverage gaps
+        const { generateStations } = await import("@/data/stations");
+        const builtIn = generateStations();
+        const merged = [...mapped];
+        for (const station of builtIn) {
+          const tooClose = mapped.some((ocm) => {
+            const dLat = (ocm.lat - station.lat) * 111.32;
+            const dLng = (ocm.lng - station.lng) * 111.32 * Math.cos((station.lat * Math.PI) / 180);
+            return Math.sqrt(dLat * dLat + dLng * dLng) < 0.5;
+          });
+          if (!tooClose) {
+            merged.push(station);
+          }
         }
-        globalIndiaStations = await globalFetchPromise;
+        setState({ stations: merged, loading: false, error: null, source: "ocm" });
+      } else {
+        const now = Date.now();
+        const cacheExpired = now - lastFetchTime > CACHE_EXPIRATION_MS;
+
+        if (!globalIndiaStations || cacheExpired) {
+          if (!globalFetchPromise || cacheExpired) {
+            console.log("[OCM] Starting initial India stations fetch (cache empty or expired)...");
+            globalFetchPromise = fetchAndMapIndiaStations();
+            lastFetchTime = now;
+          }
+          globalIndiaStations = await globalFetchPromise;
+        }
+
+        if (id !== fetchIdRef.current) return; // stale
+
+        console.log(`[OCM] Loaded ${globalIndiaStations.length} stations from cache/fetch`);
+        setState({ stations: globalIndiaStations, loading: false, error: null, source: "ocm" });
       }
-
-      if (id !== fetchIdRef.current) return; // stale
-
-      console.log(`[OCM] Loaded ${globalIndiaStations.length} stations from cache/fetch`);
-      setState({ stations: globalIndiaStations, loading: false, error: null, source: "ocm" });
     } catch (err) {
       if (id !== fetchIdRef.current) return;
       console.error("[OCM] Failed to fetch stations:", err);
 
-      // Reset promise to allow retrying on error
-      globalFetchPromise = null;
+      // Reset promise on error to allow retries
+      if (!routeCoords || routeCoords.length === 0) {
+        globalFetchPromise = null;
+      }
 
       const { generateStations } = await import("@/data/stations");
       setState({
@@ -184,24 +273,11 @@ export function useOCMStations(routeCoords: [number, number][] | null): OCMFetch
         source: "fallback",
       });
     }
-  }, []);
+  }, [routeCoords]);
 
-  // Initial fetch (no route)
   useEffect(() => {
     doFetch();
   }, [doFetch]);
 
-  // Log warning if routeCoords is provided since the API-level route filtering is disabled
-  useEffect(() => {
-    if (routeCoords && routeCoords.length > 0) {
-      console.warn(
-        "[OCM] routeCoords passed to useOCMStations, but route-aware API fetching is disabled. " +
-        "The application intentionally fetches all India stations once and applies a 50 km corridor filter in the simulation layer " +
-        "to prevent redundant network requests and API rate limits."
-      );
-    }
-  }, [routeCoords]);
-
   return state;
 }
-
